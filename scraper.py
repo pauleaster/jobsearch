@@ -30,16 +30,28 @@ class NetworkHandler:
         print(f"Opening {url}")
         self.driver.get(url)
 
-    def find_elements(self, by, value):
-        return self.driver.find_elements(by, value)
+    def selenium_interaction_delay(self):
+        """Handles the delay for Selenium interactions to ensure the browser has time to react."""
+        time.sleep(DelaySettings.SELENIUM_INTERACTION_DELAY)
 
-    def find_element(self, by, value):
-        return self.driver.find_element(by, value)
+    def find_elements(self, by, value):
+        elements = self.driver.find_elements(by, value)
+        self.selenium_interaction_delay()
+        return elements
+
+    def initiate_search(self, search_term):
+        search_field = self.driver.find_element(By.ID, "keywords-input")
+        search_field.send_keys(Keys.CONTROL + 'a')
+        search_field.send_keys(Keys.DELETE)
+        search_field.send_keys(search_term)
+        search_field.send_keys(Keys.RETURN)
+        self.selenium_interaction_delay()  # Add the delay after initiating the search
 
     def click_next_button(self):
         next_button = self.wait.until(EC.presence_of_element_located(
             (By.XPATH, '//a[starts-with(@data-automation, "page-") and @aria-label="Next"]')))
         next_button.click()
+        self.selenium_interaction_delay()
 
     def handle_successive_url_read_delay(self):
         """
@@ -109,21 +121,25 @@ class JobScraper:
         self.validated_lockfilename = "validated_lockfile"
         self.invalidated_lockfilename = "invalidated_lockfile"
         # Check for lock files and delete if they exist
-        for lockfile in [self.validated_lockfilename, self.invalidated_lockfilename]:
-            if os.path.exists(lockfile):
-                os.remove(lockfile)
-                print(
-                    f"Removed lockfile: {lockfile} due to potential previous error state.")
+        self.delete_lockfiles()
 
         self.validated_lock = FileLock(self.validated_lockfilename)
         self.invalidated_lock = FileLock(self.invalidated_lockfilename)
 
         self.read_csv_files()
+        self.final_validated_links_length = self.initial_validated_links_length
+        self.final_invalidated_links_length = self.initial_invalidated_links_length
 
-        self.initial_validated_links_length = len(self.validated_links)
-        self.initial_invalidated_links_length = len(self.invalidated_links)
+        
         print(f"len validated_links: {self.initial_validated_links_length}")
         print(f"len invalidated_links: {self.initial_invalidated_links_length}")
+
+    def delete_lockfiles(self):
+        """Deletes the lockfiles."""
+        for lockfile in [self.validated_lockfilename, self.invalidated_lockfilename]:
+            if os.path.exists(lockfile):
+                os.remove(lockfile)
+                print(f"Removed lockfile: {lockfile}")
 
     def read_csv_files(self):
         """
@@ -131,6 +147,8 @@ class JobScraper:
         and recreates the validated_links and invalidated_links dictionaries
         from the data in the files and then closes the files.
         """
+        self.initial_validated_links_length = 0
+        self.initial_invalidated_links_length = 0
         with self.validated_lock:
             if os.path.exists(self.validated_csv_file):
                 with open(self.validated_csv_file, 'r') as file:
@@ -140,6 +158,7 @@ class JobScraper:
                         if search_term not in self.validated_links.keys():
                             self.validated_links[search_term] = []
                         self.validated_links[search_term].append([link, job_number])
+                        self.initial_validated_links_length += 1
 
         with self.invalidated_lock:
             if os.path.exists(self.invalidated_csv_file):
@@ -150,6 +169,7 @@ class JobScraper:
                         if search_term not in self.invalidated_links.keys():
                             self.invalidated_links[search_term] = []
                         self.invalidated_links[search_term].append([link, job_number])
+                        self.initial_invalidated_links_length += 1
 
 
     def save_link_to_csv(self, search_term, url, valid):
@@ -223,43 +243,37 @@ class JobScraper:
                 if search_term not in self.invalidated_links:
                     self.invalidated_links[search_term] = []
                 # enter search term and submit
-                search_field = self.network_handler.find_element(By.ID, "keywords-input")
-                # or Keys.COMMAND + 'a' on Mac
-                search_field.send_keys(Keys.CONTROL + 'a')
-                search_field.send_keys(Keys.DELETE)
-                search_field.send_keys(search_term)
-                search_field.send_keys(Keys.RETURN)
+                self.network_handler.initiate_search(search_term)
                 page_number = 1
                 print(f"page {page_number}")
                 while True:
                     try:
                         # Code to scrape job links from the current page...
                         job_links = self.network_handler.find_elements(By.XPATH, '//a[contains(@href, "/job/")]')
-                        time.sleep(DelaySettings.SELENIUM_INTERACTION_DELAY)
                         for link in job_links:
                             url = link.get_attribute('href').split("?")[0]
                             job_number = url.split("/")[-1]
                             (validated_job, invalidated_job) = self.job_in_links(job_number, search_term)
 
                             if validated_job :
-                                print("X",end="")
+                                print("X", end="", flush=True)
                                 continue
                             elif invalidated_job:
-                                print("x",end="")
+                                print("x", end="", flush=True)
                                 continue
                             if self.is_valid_link(search_term, url):
                                 self.validated_links[search_term].append([url, job_number])
+                                self.final_validated_links_length += 1
                                 print("V", end="")
                             else:
                                 self.invalidated_links[search_term].append([url, job_number])
-                                print("I", end="")
+                                self.final_invalidated_links_length += 1
+                                print("I", end="", flush=True)
                         print()
                         # Try to find the "Next" button and click it
                         self.network_handler.click_next_button()
                         page_number += 1
                         print(f"page {page_number}")
-                        # You might need to add a delay here to wait for the next page to load
-                        time.sleep(DelaySettings.SELENIUM_INTERACTION_DELAY)
                     except (ElementClickInterceptedException, NoSuchElementException, TimeoutException):
                         # If the "Next" button is not found, we've reached the last page
                         break
@@ -280,8 +294,8 @@ class JobScraper:
             except Exception as e:
                 print(f"Exception while trying to close the browser: {e}")
                 traceback.print_exc()
-        self.final_validated_links_length = len(self.validated_links)
-        self.final_invalidated_links_length = len(self.invalidated_links)
+            self.delete_lockfiles()
+
 
 
 if __name__ == "__main__":
