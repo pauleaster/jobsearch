@@ -23,6 +23,8 @@ class DelaySettings:
 class NetworkHandler:
     def __init__(self, url):
         self.successive_url_read_delay = DelaySettings.SUCCESSIVE_URL_READ_DELAY
+        self.last_request_time = 0
+        self.time_since_last_request = 0
         self.driver = webdriver.Chrome()
         self.wait = WebDriverWait(self.driver, self.successive_url_read_delay)
         print(f"Opening {url}")
@@ -39,16 +41,55 @@ class NetworkHandler:
             (By.XPATH, '//a[starts-with(@data-automation, "page-") and @aria-label="Next"]')))
         next_button.click()
 
+    def handle_successive_url_read_delay(self):
+        """
+        Handles the delay between successive URL reads to adhere to a specific delay setting.
+
+        1. Calculates the time since the last request.
+        2. If this time is less than the configured SUCCESSIVE_URL_READ_DELAY, sleeps for the remaining time.
+        3. Resets the last request time to the current time.
+        """
+        self.time_since_last_request = time.time() - self.last_request_time
+        if self.time_since_last_request < DelaySettings.SUCCESSIVE_URL_READ_DELAY:
+            time.sleep(DelaySettings.SUCCESSIVE_URL_READ_DELAY -
+                    self.time_since_last_request)
+        self.last_request_time = time.time()
+
+
     def get_request(self, url):
+        """
+        Returns a requests object for the given URL.
+        self.last_request_time is updated to the current time.
+        If a requests.RequestException is raised, the request is retried up to NUM_RETRIES times.
+        The time between each retry is set to REQUEST_EXCEPTION_DELAY.
+        """
+
         last_exception = None
         for _ in range(DelaySettings.NUM_RETRIES):
             try:
-                return requests.get(url)
+                request =  requests.get(url)
+                self.last_request_time = time.time()
+                return request
             except requests.RequestException as e:
                 last_exception = e
                 print('E', end = '')
                 time.sleep(DelaySettings.REQUEST_EXCEPTION_DELAY)
         raise last_exception
+    
+    def get_soup(self, url):
+        """
+        Returns a BeautifulSoup object for the given URL.
+        The network is not accessed until the time since the last request is greater than the configured SUCCESSIVE_URL_READ_DELAY.
+        Finally, self.last_request_time is set to the current time.
+        """
+        self.handle_successive_url_read_delay()
+        response = self.get_request(url)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, 'html.parser')
+        else:
+            soup = None
+        self.last_request_time = time.time() # Set time since last request
+        return soup
 
 
     def close(self):
@@ -84,12 +125,12 @@ class JobScraper:
         print(f"len validated_links: {self.initial_validated_links_length}")
         print(f"len invalidated_links: {self.initial_invalidated_links_length}")
 
-    # def recreate_csv_files(self)
-    # Reads the validated_links.csv and invalidated_links.csv files
-    # and recreates the validated_links and invalidated_links dictionaries
-    # from the data in the files and then closes the files
-
     def read_csv_files(self):
+        """
+        Reads the validated_links.csv and invalidated_links.csv files
+        and recreates the validated_links and invalidated_links dictionaries
+        from the data in the files and then closes the files.
+        """
         with self.validated_lock:
             if os.path.exists(self.validated_csv_file):
                 with open(self.validated_csv_file, 'r') as file:
@@ -110,12 +151,13 @@ class JobScraper:
                             self.invalidated_links[search_term] = []
                         self.invalidated_links[search_term].append([link, job_number])
 
-    # def save_links_to_csv(self)
-    # Saves the current link to validated_links.csv
-    # or invalidated_links.csv depending on whether the link is valid or not
-    # and closes the file
 
     def save_link_to_csv(self, search_term, url, valid):
+        """
+            Saves the current link to validated_links.csv
+            or invalidated_links.csv depending on whether the link is valid or not
+            and closes the file.
+        """
 
         if valid:
             csv_file = self.validated_csv_file
@@ -130,33 +172,28 @@ class JobScraper:
                 csv_writer.writerow([search_term, url, job_number])
 
     def is_valid_link(self, search_term, url):
+        """
+        Checks if the url contains the search_term and calculate valid, a boolean
+        value indicating a whether the search result was present in the url.
+        The resulting link is then saved to csv as either a valid or invalid link.
+        valid is returned.
+        """
 
-        current_time = time.time()
-        self.time_since_last_request = current_time - self.last_request_time
-        if self.time_since_last_request < self.DelaySettings.SUCCESSIVE_URL_READ_DELAY:
-            # sleep for the remaining time
-            time.sleep(DelaySettings.SUCCESSIVE_URL_READ_DELAY -
-                       self.time_since_last_request)
-        response = self.network_handler.get_request(url)
-        if response.status_code == 200:
-            # print(f"Request successful for {url}")
-            soup = BeautifulSoup(response.text, 'html.parser')
-            self.last_request_time = time.time()
-            if soup:
-                soup_str = str(soup).lower()
-                valid = search_term.lower() in soup_str
-            else:
-                valid = False  # empty soup
-        else:  # request failed
+        soup = self.network_handler.get_soup(url)
+        if soup:
+            soup_str = str(soup).lower()
+            valid = search_term.lower() in soup_str
+        else:
             valid = False
-        self.last_request_time = time.time()
         self.save_link_to_csv(search_term, url, valid)
         return valid
     
     def job_in_links(self, job, search_term):
-        # get all the job numbers removing the urls
-        # from the validated_links[search_term] and invalidated_links dictionaries[search_term]
-        # and return a tuple whether the job is present in (validated_links, invalidated_links)
+        """
+        get all the job numbers from the validated_links[search_term] and 
+        invalidated_links dictionaries[search_term] and return a tuple whether 
+        the job is already present in (validated_links, invalidated_links)
+        """
         validated_jobs =[]
         invalidated_jobs = []
         for (_, job_number) in self.validated_links[search_term]:
@@ -166,6 +203,17 @@ class JobScraper:
         return (job in validated_jobs, job in invalidated_jobs)
 
     def perform_searches(self, search_terms):
+        """
+        Search the job website for each search term in search_terms.
+        Parse the search result and extract links to jobs.
+        For each link, load up the job description.
+        Validate the resulting job by double checking that the search term
+        is in the job description.
+        If it is then add the job to the validated_links dictionary.
+        Otherwise add it to the invalidated_links dictionary.
+        After the search result has been parsed, click on the next page button
+        and repeat the process until there are no more pages.
+        """
         try:
             for search_term in search_terms:
                 print(f"Processing search {search_term}")
@@ -236,13 +284,14 @@ class JobScraper:
         self.final_invalidated_links_length = len(self.invalidated_links)
 
 
-# Usage:
-scraper = JobScraper()
-scraper.perform_searches(["software engineer"])
-print(f"Validated links length: {scraper.final_validated_links_length}")
-print(f"Invalidated links length: {scraper.final_invalidated_links_length}")
-print(f"Valid links read: {scraper.final_validated_links_length - scraper.initial_validated_links_length}")
-print(f"Invalid links read: {scraper.final_invalidated_links_length - scraper.initial_invalidated_links_length}")
+if __name__ == "__main__":
+    # Usage:
+    scraper = JobScraper()
+    scraper.perform_searches(["software engineer"])
+    print(f"Validated links length: {scraper.final_validated_links_length}")
+    print(f"Invalidated links length: {scraper.final_invalidated_links_length}")
+    print(f"Valid links read: {scraper.final_validated_links_length - scraper.initial_validated_links_length}")
+    print(f"Invalid links read: {scraper.final_invalidated_links_length - scraper.initial_invalidated_links_length}")
 
 
 # This now prints a dictionary where each search term maps to a list of job links
