@@ -107,30 +107,22 @@ class NetworkHandler:
     def close(self):
         self.driver.quit()
 
-
-class JobScraper:
+class JobData:
     def __init__(self):
         self.validated_links = {}
         self.invalidated_links = {}
-        self.last_request_time = 0
-        self.time_since_last_request = 0
-        self.url = "https://www.seek.com.au/jobs/in-All-Melbourne-VIC"
-        self.network_handler = NetworkHandler(self.url)
         self.validated_csv_file = 'validated_links.csv'
         self.invalidated_csv_file = 'invalidated_links.csv'
         self.validated_lockfilename = "validated_lockfile"
         self.invalidated_lockfilename = "invalidated_lockfile"
         # Check for lock files and delete if they exist
         self.delete_lockfiles()
-
         self.validated_lock = FileLock(self.validated_lockfilename)
         self.invalidated_lock = FileLock(self.invalidated_lockfilename)
 
         self.read_csv_files()
         self.final_validated_links_length = self.initial_validated_links_length
         self.final_invalidated_links_length = self.initial_invalidated_links_length
-
-        
         print(f"len validated_links: {self.initial_validated_links_length}")
         print(f"len invalidated_links: {self.initial_invalidated_links_length}")
 
@@ -140,6 +132,26 @@ class JobScraper:
             if os.path.exists(lockfile):
                 os.remove(lockfile)
                 print(f"Removed lockfile: {lockfile}")
+
+
+    def save_link_to_csv(self, search_term, url, valid):
+        """
+            Saves the current link to validated_links.csv
+            or invalidated_links.csv depending on whether the link is valid or not
+            and closes the file.
+        """
+
+        if valid:
+            csv_file = self.validated_csv_file
+            lock = self.validated_lock
+        else:
+            csv_file = self.invalidated_csv_file
+            lock = self.invalidated_lock
+        with lock:
+            with open(csv_file, 'a', newline='') as file:
+                csv_writer = csv.writer(file)
+                job_number = url.split('/')[-1]
+                csv_writer.writerow([search_term, url, job_number])
 
     def read_csv_files(self):
         """
@@ -171,25 +183,31 @@ class JobScraper:
                         self.invalidated_links[search_term].append([link, job_number])
                         self.initial_invalidated_links_length += 1
 
-
-    def save_link_to_csv(self, search_term, url, valid):
+    def job_in_links(self, job, search_term):
         """
-            Saves the current link to validated_links.csv
-            or invalidated_links.csv depending on whether the link is valid or not
-            and closes the file.
+        get all the job numbers from the validated_links[search_term] and 
+        invalidated_links dictionaries[search_term] and return a tuple whether 
+        the job is already present in (validated_links, invalidated_links)
         """
+        validated_jobs =[]
+        invalidated_jobs = []
+        for (_, job_number) in self.validated_links[search_term]:
+            validated_jobs.append(job_number)
+        for (_, job_number) in self.invalidated_links[search_term]:
+            invalidated_jobs.append(job_number)
+        return (job in validated_jobs, job in invalidated_jobs)
 
-        if valid:
-            csv_file = self.validated_csv_file
-            lock = self.validated_lock
-        else:
-            csv_file = self.invalidated_csv_file
-            lock = self.invalidated_lock
-        with lock:
-            with open(csv_file, 'a', newline='') as file:
-                csv_writer = csv.writer(file)
-                job_number = url.split('/')[-1]
-                csv_writer.writerow([search_term, url, job_number])
+
+
+class JobScraper:
+    def __init__(self):
+        
+        self.last_request_time = 0
+        self.time_since_last_request = 0
+        self.url = "https://www.seek.com.au/jobs/in-All-Melbourne-VIC"
+        self.network_handler = NetworkHandler(self.url)
+        self.job_data = JobData()
+        
 
     def is_valid_link(self, search_term, url):
         """
@@ -205,22 +223,10 @@ class JobScraper:
             valid = search_term.lower() in soup_str
         else:
             valid = False
-        self.save_link_to_csv(search_term, url, valid)
+        self.job_data.save_link_to_csv(search_term, url, valid)
         return valid
     
-    def job_in_links(self, job, search_term):
-        """
-        get all the job numbers from the validated_links[search_term] and 
-        invalidated_links dictionaries[search_term] and return a tuple whether 
-        the job is already present in (validated_links, invalidated_links)
-        """
-        validated_jobs =[]
-        invalidated_jobs = []
-        for (_, job_number) in self.validated_links[search_term]:
-            validated_jobs.append(job_number)
-        for (_, job_number) in self.invalidated_links[search_term]:
-            invalidated_jobs.append(job_number)
-        return (job in validated_jobs, job in invalidated_jobs)
+
 
     def perform_searches(self, search_terms):
         """
@@ -238,10 +244,10 @@ class JobScraper:
             for search_term in search_terms:
                 print(f"Processing search {search_term}")
                 # initialise an empty list if key does not exist
-                if search_term not in self.validated_links:
-                    self.validated_links[search_term] = []
-                if search_term not in self.invalidated_links:
-                    self.invalidated_links[search_term] = []
+                if search_term not in self.job_data.validated_links:
+                    self.job_data.validated_links[search_term] = []
+                if search_term not in self.job_data.invalidated_links:
+                    self.job_data.invalidated_links[search_term] = []
                 # enter search term and submit
                 self.network_handler.initiate_search(search_term)
                 page_number = 1
@@ -253,7 +259,7 @@ class JobScraper:
                         for link in job_links:
                             url = link.get_attribute('href').split("?")[0]
                             job_number = url.split("/")[-1]
-                            (validated_job, invalidated_job) = self.job_in_links(job_number, search_term)
+                            (validated_job, invalidated_job) = self.job_data.job_in_links(job_number, search_term)
 
                             if validated_job :
                                 print("X", end="", flush=True)
@@ -262,12 +268,12 @@ class JobScraper:
                                 print("x", end="", flush=True)
                                 continue
                             if self.is_valid_link(search_term, url):
-                                self.validated_links[search_term].append([url, job_number])
-                                self.final_validated_links_length += 1
+                                self.job_data.validated_links[search_term].append([url, job_number])
+                                self.job_data.final_validated_links_length += 1
                                 print("V", end="")
                             else:
-                                self.invalidated_links[search_term].append([url, job_number])
-                                self.final_invalidated_links_length += 1
+                                self.job_data.invalidated_links[search_term].append([url, job_number])
+                                self.job_data.final_invalidated_links_length += 1
                                 print("I", end="", flush=True)
                         print()
                         # Try to find the "Next" button and click it
@@ -294,18 +300,19 @@ class JobScraper:
             except Exception as e:
                 print(f"Exception while trying to close the browser: {e}")
                 traceback.print_exc()
-            self.delete_lockfiles()
+            self.job_data.delete_lockfiles()
 
 
 
 if __name__ == "__main__":
     # Usage:
     scraper = JobScraper()
-    scraper.perform_searches(["software engineer"])
-    print(f"Validated links length: {scraper.final_validated_links_length}")
-    print(f"Invalidated links length: {scraper.final_invalidated_links_length}")
-    print(f"Valid links read: {scraper.final_validated_links_length - scraper.initial_validated_links_length}")
-    print(f"Invalid links read: {scraper.final_invalidated_links_length - scraper.initial_invalidated_links_length}")
+    scraper.perform_searches(["software developer"])
+    print(f"Validated links length: {scraper.job_data.final_validated_links_length}")
+    print(f"Invalidated links length: {scraper.job_data.final_invalidated_links_length}")
+    print(f"Valid links read: {scraper.job_data.final_validated_links_length - scraper.job_data.initial_validated_links_length}")
+    print(f"Invalid links read: {scraper.job_data.final_invalidated_links_length - scraper.job_data.initial_invalidated_links_length}")
+
 
 
 # This now prints a dictionary where each search term maps to a list of job links
