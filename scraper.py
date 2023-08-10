@@ -15,6 +15,8 @@ from filelock import FileLock
 class DelaySettings:
     SELENIUM_INTERACTION_DELAY = 10
     SUCCESSIVE_URL_READ_DELAY = 20
+    REQUEST_EXCEPTION_DELAY = 30
+    NUM_RETRIES = 4
 
 
 
@@ -38,7 +40,16 @@ class NetworkHandler:
         next_button.click()
 
     def get_request(self, url):
-        return requests.get(url)
+        last_exception = None
+        for _ in range(DelaySettings.NUM_RETRIES):
+            try:
+                return requests.get(url)
+            except requests.RequestException as e:
+                last_exception = e
+                print('E', end = '')
+                time.sleep(DelaySettings.REQUEST_EXCEPTION_DELAY)
+        raise last_exception
+
 
     def close(self):
         self.driver.quit()
@@ -68,8 +79,11 @@ class JobScraper:
         self.invalidated_lock = FileLock(self.invalidated_lockfilename)
 
         self.read_csv_files()
-        print(f"validated_links: \n{self.validated_links}")
-        print(f"invalidated_links: \n{self.invalidated_links}")
+
+        self.initial_validated_links_length = len(self.validated_links)
+        self.initial_invalidated_links_length = len(self.invalidated_links)
+        print(f"len validated_links: {self.initial_validated_links_length}")
+        print(f"len invalidated_links: {self.initial_invalidated_links_length}")
 
     # def recreate_csv_files(self)
     # Reads the validated_links.csv and invalidated_links.csv files
@@ -219,10 +233,18 @@ class JobScraper:
             except Exception as e:
                 print(f"Exception while trying to close the browser: {e}")
                 traceback.print_exc()
+        self.final_validated_links_length = len(self.validated_links)
+        self.final_invalidated_links_length = len(self.invalidated_links)
 
 
 # Usage:
 scraper = JobScraper()
 scraper.perform_searches(["software engineer"])
+print(f"Validated links length: {scraper.final_validated_links_length}")
+print(f"Invalidated links length: {scraper.final_invalidated_links_length}")
+print(f"Valid links read: {scraper.final_validated_links_length - scraper.initial_validated_links_length}")
+print(f"Invalid links read: {scraper.final_invalidated_links_length - scraper.initial_invalidated_links_length}")
+
+
 # This now prints a dictionary where each search term maps to a list of job links
-print(scraper.validated_links)
+# print(scraper.validated_links)
