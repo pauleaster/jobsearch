@@ -12,20 +12,47 @@ import csv
 import os
 from filelock import FileLock
 
+class DelaySettings:
+    SELENIUM_INTERACTION_DELAY = 10
+    SUCCESSIVE_URL_READ_DELAY = 20
+
+
+
+class NetworkHandler:
+    def __init__(self, url):
+        self.successive_url_read_delay = DelaySettings.SUCCESSIVE_URL_READ_DELAY
+        self.driver = webdriver.Chrome()
+        self.wait = WebDriverWait(self.driver, self.successive_url_read_delay)
+        print(f"Opening {url}")
+        self.driver.get(url)
+
+    def find_elements(self, by, value):
+        return self.driver.find_elements(by, value)
+
+    def find_element(self, by, value):
+        return self.driver.find_element(by, value)
+
+    def click_next_button(self):
+        next_button = self.wait.until(EC.presence_of_element_located(
+            (By.XPATH, '//a[starts-with(@data-automation, "page-") and @aria-label="Next"]')))
+        next_button.click()
+
+    def get_request(self, url):
+        return requests.get(url)
+
+    def close(self):
+        self.driver.quit()
+
 
 class JobScraper:
     def __init__(self):
-        self.driver = webdriver.Chrome()
-        # 10 is the maximum number of seconds to wait.
-        self.wait = WebDriverWait(self.driver, 20)
         self.validated_links = {}
         self.invalidated_links = {}
         self.last_request_time = 0
         self.time_since_last_request = 0
         self.successive_url_read_delay = 20 # seconds
         self.url = "https://www.seek.com.au/jobs/in-All-Melbourne-VIC"
-        print(f"Opening {self.url}")
-        self.driver.get(self.url)
+        self.network_handler = NetworkHandler(self.url)
         self.validated_csv_file = 'validated_links.csv'
         self.invalidated_csv_file = 'invalidated_links.csv'
         self.validated_lockfilename = "validated_lockfile"
@@ -97,7 +124,7 @@ class JobScraper:
             # sleep for the remaining time
             time.sleep(self.successive_url_read_delay -
                        self.time_since_last_request)
-        response = requests.get(url)  # make a request
+        response = self.network_handler.get_request(url)
         if response.status_code == 200:
             # print(f"Request successful for {url}")
             soup = BeautifulSoup(response.text, 'html.parser')
@@ -109,6 +136,7 @@ class JobScraper:
                 valid = False  # empty soup
         else:  # request failed
             valid = False
+        self.last_request_time = time.time()
         self.save_link_to_csv(search_term, url, valid)
         return valid
     
@@ -124,7 +152,7 @@ class JobScraper:
             invalidated_jobs.append(job_number)
         return (job in validated_jobs, job in invalidated_jobs)
 
-    def perform_searches(self, search_terms, delay):
+    def perform_searches(self, search_terms):
         try:
             for search_term in search_terms:
                 print(f"Processing search {search_term}")
@@ -134,8 +162,7 @@ class JobScraper:
                 if search_term not in self.invalidated_links:
                     self.invalidated_links[search_term] = []
                 # enter search term and submit
-                search_field = self.driver.find_element(
-                    By.ID, "keywords-input")
+                search_field = self.network_handler.find_element(By.ID, "keywords-input")
                 # or Keys.COMMAND + 'a' on Mac
                 search_field.send_keys(Keys.CONTROL + 'a')
                 search_field.send_keys(Keys.DELETE)
@@ -146,9 +173,8 @@ class JobScraper:
                 while True:
                     try:
                         # Code to scrape job links from the current page...
-                        job_links = self.driver.find_elements(
-                            By.XPATH, '//a[contains(@href, "/job/")]')
-                        time.sleep(delay)
+                        job_links = self.network_handler.find_elements(By.XPATH, '//a[contains(@href, "/job/")]')
+                        time.sleep(DelaySettings.SELENIUM_INTERACTION_DELAY)
                         for link in job_links:
                             url = link.get_attribute('href').split("?")[0]
                             job_number = url.split("/")[-1]
@@ -168,14 +194,11 @@ class JobScraper:
                                 print("I", end="")
                         print()
                         # Try to find the "Next" button and click it
-                        next_button = self.wait.until(EC.presence_of_element_located(
-                            (By.XPATH, '//a[starts-with(@data-automation, "page-") and @aria-label="Next"]')))
-
-                        next_button.click()
+                        self.network_handler.click_next_button()
                         page_number += 1
                         print(f"page {page_number}")
                         # You might need to add a delay here to wait for the next page to load
-                        time.sleep(delay)
+                        time.sleep(DelaySettings.SELENIUM_INTERACTION_DELAY)
                     except (ElementClickInterceptedException, NoSuchElementException, TimeoutException):
                         # If the "Next" button is not found, we've reached the last page
                         break
@@ -192,7 +215,7 @@ class JobScraper:
             # attempt to close the browser
             try:
                 print("Closing browser...")
-                self.driver.quit()
+                self.network_handler.close()
             except Exception as e:
                 print(f"Exception while trying to close the browser: {e}")
                 traceback.print_exc()
@@ -200,7 +223,6 @@ class JobScraper:
 
 # Usage:
 scraper = JobScraper()
-scraper.perform_searches(["rust", "C++", "python", "C#"],
-                         10)  # Change delay as per requirement
+scraper.perform_searches(["software engineer"])
 # This now prints a dictionary where each search term maps to a list of job links
 print(scraper.validated_links)
