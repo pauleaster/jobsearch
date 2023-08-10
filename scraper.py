@@ -61,7 +61,6 @@ class JobScraper:
         self.invalidated_links = {}
         self.last_request_time = 0
         self.time_since_last_request = 0
-        self.successive_url_read_delay = 20 # seconds
         self.url = "https://www.seek.com.au/jobs/in-All-Melbourne-VIC"
         self.network_handler = NetworkHandler(self.url)
         self.validated_csv_file = 'validated_links.csv'
@@ -134,9 +133,9 @@ class JobScraper:
 
         current_time = time.time()
         self.time_since_last_request = current_time - self.last_request_time
-        if self.time_since_last_request < self.successive_url_read_delay:
+        if self.time_since_last_request < self.DelaySettings.SUCCESSIVE_URL_READ_DELAY:
             # sleep for the remaining time
-            time.sleep(self.successive_url_read_delay -
+            time.sleep(DelaySettings.SUCCESSIVE_URL_READ_DELAY -
                        self.time_since_last_request)
         response = self.network_handler.get_request(url)
         if response.status_code == 200:
