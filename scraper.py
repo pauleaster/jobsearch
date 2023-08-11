@@ -268,13 +268,16 @@ class JobScraper:
         valid is returned.
         """
 
+        valid = False
         soup = self.network_handler.get_soup(url)
         if soup:
             soup_str = str(soup).lower()
             valid = search_term.lower() in soup_str
+        if valid:
+            link_status = LinkStatus.VALID
         else:
-            valid = False
-        self.job_data.save_link_to_csv(search_term, url, valid)
+            link_status = LinkStatus.INVALID
+        self.job_data.save_link_to_csv(search_term, url, link_status)
         return valid
 
     def process_link(self, link, search_term):
