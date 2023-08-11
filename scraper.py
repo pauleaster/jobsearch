@@ -340,7 +340,7 @@ class JobScraper:
                         # Try to find the "Next" button and click it
                         self.network_handler.click_next_button()
                         page_number += 1
-                        print(f"page {page_number}")
+                        print(f"\npage {page_number}")
                     except (
                         ElementClickInterceptedException,
                         NoSuchElementException,
@@ -369,7 +369,7 @@ class JobScraper:
 if __name__ == "__main__":
     # Usage:
     scraper = JobScraper()
-    scraper.perform_searches(["software developer"])
+    scraper.perform_searches(["C++","C#","python","rust","software engineer","software developer","numpy","matplotlib"])
     print(
         f"Validated links length: {scraper.job_data.get_link_count(LinkStatus.VALID)}"
     )
