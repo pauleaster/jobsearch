@@ -172,10 +172,10 @@ class JobData:
         }
 
         print(
-            f"Initial Validated links #{scraper.job_data.get_link_count(LinkStatus.VALID)}"
+            f"Initial Validated links #{self.get_link_count(LinkStatus.VALID)}"
         )
         print(
-            f"Initial Invalidated links #{scraper.job_data.get_link_count(LinkStatus.INVALID)}"
+            f"Initial Invalidated links #{self.get_link_count(LinkStatus.INVALID)}"
         )
 
     def get_link_count(self, status: LinkStatus) -> int:
