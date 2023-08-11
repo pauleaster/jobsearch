@@ -36,7 +36,7 @@ class NetworkHandler:
     """
 
     def __init__(self, url):
-        self.successive_url_read_delay = DelaySettings.SUCCESSIVE_URL_READ_DELAY
+        self.successive_url_read_delay = DelaySettings.SUCCESSIVE_URL_READ_DELAY.value
         self.last_request_time = 0
         self.time_since_last_request = 0
         self.driver = webdriver.Chrome()
@@ -46,7 +46,7 @@ class NetworkHandler:
 
     def selenium_interaction_delay(self):
         """Handles the delay for Selenium interactions to ensure the browser has time to react."""
-        time.sleep(DelaySettings.SELENIUM_INTERACTION_DELAY)
+        time.sleep(DelaySettings.SELENIUM_INTERACTION_DELAY.value)
 
     def find_elements(self, by, value): # pylint: disable=invalid-name
         elements = self.driver.find_elements(by, value)
@@ -83,9 +83,9 @@ class NetworkHandler:
         3. Resets the last request time to the current time.
         """
         self.time_since_last_request = time.time() - self.last_request_time
-        if self.time_since_last_request < DelaySettings.SUCCESSIVE_URL_READ_DELAY:
+        if self.time_since_last_request < DelaySettings.SUCCESSIVE_URL_READ_DELAY.value:
             time.sleep(
-                DelaySettings.SUCCESSIVE_URL_READ_DELAY - self.time_since_last_request
+                DelaySettings.SUCCESSIVE_URL_READ_DELAY.value - self.time_since_last_request
             )
         self.last_request_time = time.time()
 
@@ -99,15 +99,15 @@ class NetworkHandler:
         """
 
         last_exception = None
-        for _ in range(DelaySettings.NUM_RETRIES):
+        for _ in range(DelaySettings.NUM_RETRIES.value):
             try:
-                request = requests.get(url, timeout=DelaySettings.REQUEST_TIMEOUT)
+                request = requests.get(url, timeout=DelaySettings.REQUEST_TIMEOUT.value)
                 self.last_request_time = time.time()
                 return request
             except requests.RequestException as exception:
                 last_exception = exception
                 print("E", end="")
-                time.sleep(DelaySettings.REQUEST_EXCEPTION_DELAY)
+                time.sleep(DelaySettings.REQUEST_EXCEPTION_DELAY.value)
         raise last_exception
 
     def get_soup(self, url):
