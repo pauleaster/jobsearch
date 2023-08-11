@@ -93,8 +93,7 @@ class JobData:
         }
 
         # Check for lock files and delete if they exist
-        for lockfile_handler in self.lockfile_handlers.values():
-            lockfile_handler.delete()
+        self.delete_lockfiles()
         self.read_csv_files()
 
         # Store the initial counts
@@ -105,6 +104,11 @@ class JobData:
 
         print(f"Initial Validated links #{self.get_link_count(LinkStatus.VALID)}")
         print(f"Initial Invalidated links #{self.get_link_count(LinkStatus.INVALID)}")
+
+    def delete_lockfiles(self):
+        """Deletes the lockfiles."""
+        for lockfile_handler in self.lockfile_handlers.values():
+            lockfile_handler.delete()
 
     def get_link_count(self, status: LinkStatus) -> int:
         """Return the current count of links for a specific status."""
