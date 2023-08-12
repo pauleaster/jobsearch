@@ -42,7 +42,7 @@ class NetworkHandler:
     def find_job_links(self):
         """Find and return job links on the current page."""
         xpath_expression = '//a[contains(@href, "/job/")]'
-        return self.driver.find_elements(By.XPATH, xpath_expression)
+        return self.find_elements(By.XPATH, xpath_expression)
 
     def initiate_search(self, search_term):
         search_field = self.driver.find_element(By.ID, "keywords-input")
