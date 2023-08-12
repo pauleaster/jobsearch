@@ -1,3 +1,11 @@
+"""
+scraper.py
+----------
+
+This module provides the JobScraper class, a utility for navigating job websites.
+It identifies job links based on search criteria, validates these links, and categorizes
+them as either valid or invalid. The results are saved to respective CSV files.
+"""
 import traceback
 
 from .handlers import NetworkHandler
@@ -6,7 +14,17 @@ from .config import JOB_SCRAPER_URL
 
 
 class JobScraper:
+    """
+    Scraper utility to navigate a job website, identify and validate job links
+    based on search terms, and categorize them as valid or invalid links.
+    """
+
     def __init__(self):
+        """
+        Initializes an instance of the JobScraper with attributes for
+        managing the request timings, the scraper's URL, network handler,
+        and the job data structure.
+        """
         self.last_request_time = 0
         self.time_since_last_request = 0
         self.url = JOB_SCRAPER_URL
@@ -15,10 +33,9 @@ class JobScraper:
 
     def is_valid_link(self, search_term, url):
         """
-        Checks if the url contains the search_term and calculate valid, a boolean
-        value indicating a whether the search result was present in the url.
-        The resulting link is then saved to csv as either a valid or invalid link.
-        valid is returned.
+        Validates if the provided URL's content contains the search term.
+        The link is then categorized as valid or invalid and saved to the
+        respective CSV. The validity status (boolean) is returned.
         """
 
         valid = False
@@ -54,22 +71,27 @@ class JobScraper:
             print("I", end="", flush=True)
 
     def process_page(self, search_term):
-        """Process the current page for job links and action on them."""
+        """
+        Processes the current page, extracting job links and evaluating
+        each link's validity based on the given search term.
+        """
         job_links = self.network_handler.find_job_links()
         for link in job_links:
             self.process_link(link, search_term)
 
     def perform_searches(self, search_terms):
         """
-        Search the job website for each search term in search_terms.
-        Parse the search result and extract links to jobs.
-        For each link, load up the job description.
-        Validate the resulting job by double checking that the search term
-        is in the job description.
-        If it is then add the job to the validated_links dictionary.
-        Otherwise add it to the invalidated_links dictionary.
-        After the search result has been parsed, click on the next page button
-        and repeat the process until there are no more pages.
+        Drives the job scraping process:
+
+        1. Searches the job website for each term in the provided search terms.
+        2. Extracts job links from the search results.
+        3. Validates each job link based on its content.
+        4. Categorizes and saves each link as either valid or invalid.
+        5. Repeats the process for every subsequent page of results until
+           no further pages exist.
+
+        Exceptions (including manual interrupts) are gracefully handled,
+        and relevant messages are displayed.
         """
         try:
             for search_term in search_terms:
@@ -96,7 +118,7 @@ class JobScraper:
 
         except KeyboardInterrupt:
             print("Scraping interrupted by user.")
-        except Exception as exception:
+        except Exception as exception: # pylint: disable=broad-except
             # unhandled exception
             print(f"Unhandled exception occurred: {exception}")
             print("Printing stack trace...")
@@ -106,11 +128,7 @@ class JobScraper:
             try:
                 print("Closing browser...")
                 self.network_handler.close()
-            except Exception as exception:
+            except Exception as exception: # pylint: disable=broad-except
                 print(f"Exception while trying to close the browser: {exception}")
                 traceback.print_exc()
             self.job_data.delete_lockfiles()
-
-
-# This now prints a dictionary where each search term maps to a list of job links
-# print(scraper.validated_links)
