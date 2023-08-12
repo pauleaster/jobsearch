@@ -2,13 +2,14 @@ import traceback
 
 from .handlers import NetworkHandler
 from .models import JobData, LinkStatus
+from .config import JOB_SCRAPER_URL
 
 
 class JobScraper:
     def __init__(self):
         self.last_request_time = 0
         self.time_since_last_request = 0
-        self.url = "https://www.seek.com.au/jobs/in-All-Melbourne-VIC"
+        self.url = JOB_SCRAPER_URL
         self.network_handler = NetworkHandler(self.url)
         self.job_data = JobData()
 
