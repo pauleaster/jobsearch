@@ -7,19 +7,6 @@ from filelock import FileLock
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 
-
-class DelaySettings(Enum):
-    """
-    Delay constants for network handling
-    """
-
-    SELENIUM_INTERACTION_DELAY = 10
-    SUCCESSIVE_URL_READ_DELAY = 20
-    REQUEST_EXCEPTION_DELAY = 30
-    REQUEST_TIMEOUT = 10
-    NUM_RETRIES = 4
-
-
 class LinkStatus(Enum):
     """
     Flag to indicate whether the links are valid or not.
@@ -60,7 +47,6 @@ class LockFileHandler:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.lock.release()
-
 
 class JobData:
     def __init__(self):

@@ -13,7 +13,7 @@ from selenium.common.exceptions import (
 import requests
 from bs4 import BeautifulSoup
 
-from .models import DelaySettings
+from .delays import DelaySettings
 
 
 class NetworkHandler:
