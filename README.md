@@ -1,11 +1,13 @@
 # JobScraper
 
 Usage:
+
 ```python
 scraper = JobScraper()
 scraper.perform_searches(["C++", "python"])
 ```
-The resulting job URLs are output to ``valid_links.csv`` or ``invalid_links.csv`` depending on whether the search term was found in the resulting job description or not. 
+
+The resulting job URLs are output to ``valid_links.csv`` or ``invalid_links.csv`` depending on whether the search term was found in the resulting job description or not.
 Some job websites use AI techniques to perform searches, and some results are promoted for commercial reasons. Therefore, the search term is not always present in the resulting job description.
 An additional search is performed to ensure that the search term is present in the job descriptions of the jobs listed in ``valid_links.csv``.
 

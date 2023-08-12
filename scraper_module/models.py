@@ -1,3 +1,28 @@
+"""
+models.py
+---------
+
+This module defines structures and utilities for handling job-related data:
+
+- `LinkStatus`: Enum representing job link validity.
+- `CSVHandler`: Utility for reading/writing to CSV files.
+- `LockFileHandler`: Manages concurrency using lock files for file access.
+- `JobData`: Manages job data, including links' validity, and tracks counts.
+
+The module also sets up paths for file management.
+
+Examples:
+    >>> job_data = JobData()
+    >>> status = job_data.job_in_links("job-id")
+    >>> if not status[LinkStatus.VALID]:
+    ...     job_data.add_new_link("term", "https://example.com/job-id", "job-id",
+    ...                           LinkStatus.VALID)
+
+Note: Ensure lockfiles are managed properly, especially in multi-threaded scenarios.
+"""
+
+
+
 import os
 import csv
 from enum import Enum, auto
@@ -6,6 +31,7 @@ from filelock import FileLock
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
+
 
 class LinkStatus(Enum):
     """
@@ -16,40 +42,89 @@ class LinkStatus(Enum):
     VALID = auto()
     INVALID = auto()
 
+
 class CSVHandler:
+    """
+    Provides methods for reading and appending to csv files.
+    """
+
     def __init__(self, filename):
+        """
+        Creates a CSVHandler instance with a filepath
+        in the parent directory.
+        """
         self.filepath = os.path.join(parent_dir, filename)
 
     def append_row(self, row):
+        """
+        Appends a row to the csv file.
+        """
         with open(self.filepath, "a", newline="", encoding="utf-8") as file:
             csv_writer = csv.writer(file)
             csv_writer.writerow(row)
 
     def read_rows(self):
+        """
+        Reads the rows from the csv file and returns them as a list.
+        """
         if os.path.exists(self.filepath):
             with open(self.filepath, "r", encoding="utf-8") as file:
                 csv_reader = csv.reader(file)
                 return list(csv_reader)
         return []
 
+
 class LockFileHandler:
+    """
+    Manages lockfiles for the csv files.
+    """
+
     def __init__(self, lockfilename):
+        """
+        Creates a LockFileHandler instance with a filepath
+        """
         self.lockfilename = os.path.join(current_dir, lockfilename)
         self.lock = FileLock(self.lockfilename)
 
     def delete(self):
+        """
+        Deletes the lockfile if it exists.
+        """
         if os.path.exists(self.lockfilename):
             os.remove(self.lockfilename)
             print(f"Removed lockfile: {self.lockfilename}")
 
     def __enter__(self):
+        """
+        Acquires the lock when entering the context of a `with` statement.
+
+        This allows for safely working with resources, such as files,
+        ensuring that only one operation accesses them at a given time.
+        """
         self.lock.acquire()
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        """
+        Releases the lock when exiting the context of a `with` statement.
+
+        This ensures that any other operations waiting for the lock can
+        proceed, and the resource (e.g., a file) is freed up for other uses.
+        """
         self.lock.release()
 
+
 class JobData:
+    """
+    Handles the storage, management, and manipulation of job-related data
+    including their links and statuses (valid or invalid).
+    """
+
     def __init__(self):
+        """
+        Initializes an instance of JobData with storage structures for job links,
+        job counts, CSV handlers, lock file handlers, and initial counts.
+        Also, initializes the job data by reading existing CSV files.
+        """
         self.links = {LinkStatus.VALID: {}, LinkStatus.INVALID: {}}
 
         # A dictionary for storing job numbers for each search_term
@@ -61,7 +136,7 @@ class JobData:
         self.csv_handlers = {
             LinkStatus.VALID: CSVHandler(self.csv_files[LinkStatus.VALID]),
             LinkStatus.INVALID: CSVHandler(self.csv_files[LinkStatus.INVALID]),
-        }        
+        }
 
         self.lockfilenames = {
             LinkStatus.VALID: "validated_lockfile",
@@ -71,11 +146,6 @@ class JobData:
         self.lockfile_handlers = {
             LinkStatus.VALID: LockFileHandler(self.lockfilenames[LinkStatus.VALID]),
             LinkStatus.INVALID: LockFileHandler(self.lockfilenames[LinkStatus.INVALID]),
-        }
-
-        self.locks = {
-            LinkStatus.VALID: FileLock(self.lockfilenames[LinkStatus.VALID]),
-            LinkStatus.INVALID: FileLock(self.lockfilenames[LinkStatus.INVALID]),
         }
 
         # Check for lock files and delete if they exist
@@ -97,20 +167,21 @@ class JobData:
             lockfile_handler.delete()
 
     def get_link_count(self, status: LinkStatus) -> int:
-        """Return the current count of links for a specific status."""
+        """Return the current count of links for a provided status."""
         return sum(len(links) for links in self.links[status].values())
 
     def get_links_difference(self, status: LinkStatus) -> int:
         """
-        Return the difference between initial and current count of links
-        for a specific status."""
+        Calculates and returns the difference in job link counts from the
+        initial count to the current count for a given status.
+        """
         return self.get_link_count(status) - self.initial_counts[status]
 
     def save_link_to_csv(self, search_term, url, status: LinkStatus):
         """
-        Saves the current link to validated_links.csv
-        or invalidated_links.csv depending on whether the link is valid or not
-        and closes the file.
+        Saves a job link to its respective CSV file (either validated or
+        invalidated) based on its status. Uses a lock to ensure safe
+        write operations.
         """
 
         job_number = url.split("/")[-1]
@@ -121,9 +192,9 @@ class JobData:
 
     def read_csv_files(self):
         """
-        Reads the validated_links.csv and invalidated_links.csv files
-        and recreates the validated_links and invalidated_links dictionaries
-        from the data in the files and then closes the files.
+        Reads job links from their respective CSV files (either validated
+        or invalidated) and populates the internal storage structures.
+        Uses a lock to ensure safe read operations.
         """
         for status in LinkStatus:
             link_dict = self.links[status]
@@ -140,9 +211,8 @@ class JobData:
 
     def job_in_links(self, job):
         """
-        Returns a dictionary of booleans indicating whether the job is present in
-        the validated_links or invalidated_links dictionaries for any search_term.
-        The dictionary keys are LinkStatus.VALID and LinkStatus.INVALID.
+        Checks if a job is present in either the validated or invalidated links set.
+        Returns a dictionary indicating the presence of the job in each set.
         """
         results = {}
         for status in LinkStatus:
@@ -151,7 +221,8 @@ class JobData:
 
     def add_new_link(self, search_term, url, job_number, status: LinkStatus):
         """
-        Adds a new link to the links dictionary depending on the link's status.
+        Adds a new job link to the internal storage, categorized by the provided status.
+        Updates both the link dictionary and job number set.
         """
         if search_term not in self.links[status]:
             self.links[status][search_term] = []
