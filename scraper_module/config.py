@@ -1,3 +1,20 @@
+"""
+config.py
+
+Provides configuration loading functionality for the scraper tool.
+
+This module attempts to load the configuration from `~/.scraper/scraper.conf`:
+- Reads the JOB_SCRAPER_URL from the configuration.
+- Raises an error if the configuration file or necessary keys are missing.
+
+Example configuration:
+[DEFAULT]
+URL = https://url.for.job.search/jobs
+
+Note:
+Ensure that the configuration file exists and has the required keys before
+running any scraper tool that depends on this module.
+"""
 import configparser
 import os
 
