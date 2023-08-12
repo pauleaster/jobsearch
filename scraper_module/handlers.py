@@ -8,7 +8,7 @@ from selenium.webdriver.common.by import By
 from selenium.common.exceptions import (
     ElementClickInterceptedException,
     NoSuchElementException,
-    TimeoutException,
+    TimeoutException
 )
 import requests
 from bs4 import BeautifulSoup
@@ -69,7 +69,7 @@ class NetworkHandler:
         except (
             ElementClickInterceptedException,
             NoSuchElementException,
-            TimeoutException,
+            TimeoutException
         ):
             return (
                 False  # Failed to click the button because of one of these exceptions
