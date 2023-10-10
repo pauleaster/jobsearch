@@ -10,7 +10,14 @@ import traceback
 
 from .handlers import NetworkHandler
 from .models import JobData, LinkStatus
-from .config import JOB_SCRAPER_URL
+from .config import JOB_SCRAPER_DEFAULT_URL, JOB_SCRAPER_REMOTE_URL
+
+USE_REMOTE = False  # Set this constant to either True or False based on your requirements
+
+if USE_REMOTE:
+    JOB_SCRAPER_URL = JOB_SCRAPER_REMOTE_URL
+else:
+    JOB_SCRAPER_URL = JOB_SCRAPER_DEFAULT_URL
 
 
 class JobScraper:
@@ -42,7 +49,9 @@ class JobScraper:
         soup = self.network_handler.get_soup(url)
         if soup:
             soup_str = str(soup).lower()
-            valid = search_term.lower() in soup_str
+            search_terms = search_term.lower().split()
+            valid = all(term in soup_str for term in search_terms)
+            
         if valid:
             link_status = LinkStatus.VALID
         else:
