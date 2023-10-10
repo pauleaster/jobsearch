@@ -2,12 +2,6 @@
 from scraper_module.scraper import JobScraper, LinkStatus
 
 
-<<<<<<< Updated upstream
-if __name__ == "__main__":
-    # Usage:
-    scraper = JobScraper()
-    scraper.perform_searches(["simulink", "mathematica"])
-=======
 SEARCH_TERMS = [
     "C++",
     "python",
@@ -31,7 +25,6 @@ if __name__ == "__main__":
     # Usage:
     scraper = JobScraper()
     scraper.perform_searches(search_terms)
->>>>>>> Stashed changes
     print(
         f"Validated links length: {scraper.job_data.get_link_count(LinkStatus.VALID)}"
     )
