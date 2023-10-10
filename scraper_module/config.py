@@ -23,14 +23,29 @@ config_path = os.path.expanduser("~/.scraper/scraper.conf")
 
 if os.path.exists(config_path):
     config.read(config_path)
+
+
+    # Reading the DEFAULT section
     if "URL" in config["DEFAULT"]:
         JOB_SCRAPER_DEFAULT_URL = config["DEFAULT"]["URL"]
     else:
         raise ValueError("URL key not found in the configuration file!")
+    
+    # Reading the REMOTE section
     if "URL" in config["REMOTE"]:
         JOB_SCRAPER_REMOTE_URL = config["REMOTE"]["URL"]
     else:
         raise ValueError("URL key not found in the REMOTE section of the configuration file!")
+
+    # Reading the DATABASE section
+    if "DATABASE" in config:
+        DB_NAME = config["DATABASE"].get("DB_NAME")
+        DB_USER = config["DATABASE"].get("DB_USER")
+        DB_PASSWORD = config["DATABASE"].get("DB_PASSWORD")
+        DB_HOST = config["DATABASE"].get("DB_HOST", "localhost")
+        DB_PORT = config["DATABASE"].get("DB_PORT", "5432")
+    else:
+        raise ValueError("DATABASE section not found in the configuration file!")
 
 else:
     raise ValueError(f"Configuration file not found at {config_path}")
