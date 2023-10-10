@@ -18,14 +18,19 @@ running any scraper tool that depends on this module.
 import configparser
 import os
 
-config = configparser.ConfigParser()
+config = configparser.ConfigParser(interpolation=None)
 config_path = os.path.expanduser("~/.scraper/scraper.conf")
 
 if os.path.exists(config_path):
     config.read(config_path)
     if "URL" in config["DEFAULT"]:
-        JOB_SCRAPER_URL = config["DEFAULT"]["URL"]
+        JOB_SCRAPER_DEFAULT_URL = config["DEFAULT"]["URL"]
     else:
         raise ValueError("URL key not found in the configuration file!")
+    if "URL" in config["REMOTE"]:
+        JOB_SCRAPER_REMOTE_URL = config["REMOTE"]["URL"]
+    else:
+        raise ValueError("URL key not found in the REMOTE section of the configuration file!")
+
 else:
     raise ValueError(f"Configuration file not found at {config_path}")
