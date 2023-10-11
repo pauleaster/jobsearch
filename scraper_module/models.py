@@ -27,6 +27,8 @@ import os
 import csv
 from enum import Enum, auto
 from filelock import FileLock
+from .db_handler import DBHandler
+from .config import DB_NAME, DB_USER, DB_PASSWORD, DB_HOST, DB_PORT
 
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -125,50 +127,52 @@ class JobData:
         job counts, CSV handlers, lock file handlers, and initial counts.
         Also, initializes the job data by reading existing CSV files.
         """
-        self.links = {LinkStatus.VALID: {}, LinkStatus.INVALID: {}}
+        # Initialize DB connection
+        self.db_handler = DBHandler(dbname=DB_NAME, user=DB_USER, password=DB_PASSWORD, host=DB_HOST, port=DB_PORT)
+        self.db_handler.connect()
 
-        # A dictionary for storing job numbers for each search_term
-        self.job_numbers = {LinkStatus.VALID: set(), LinkStatus.INVALID: set()}
-        self.csv_files = {
-            LinkStatus.VALID: "validated_links.csv",
-            LinkStatus.INVALID: "invalidated_links.csv",
-        }
-        self.csv_handlers = {
-            LinkStatus.VALID: CSVHandler(self.csv_files[LinkStatus.VALID]),
-            LinkStatus.INVALID: CSVHandler(self.csv_files[LinkStatus.INVALID]),
-        }
-
-        self.lockfilenames = {
-            LinkStatus.VALID: "validated_lockfile",
-            LinkStatus.INVALID: "invalidated_lockfile",
-        }
-
-        self.lockfile_handlers = {
-            LinkStatus.VALID: LockFileHandler(self.lockfilenames[LinkStatus.VALID]),
-            LinkStatus.INVALID: LockFileHandler(self.lockfilenames[LinkStatus.INVALID]),
-        }
-
-        # Check for lock files and delete if they exist
-        self.delete_lockfiles()
-        self.read_csv_files()
-
-        # Store the initial counts
-        self.initial_counts = {
-            LinkStatus.VALID: self.get_link_count(LinkStatus.VALID),
-            LinkStatus.INVALID: self.get_link_count(LinkStatus.INVALID),
-        }
-
+        # Ensure the required table exists
+        self.create_table_if_not_exists()
         print(f"Initial Validated links #{self.get_link_count(LinkStatus.VALID)}")
         print(f"Initial Invalidated links #{self.get_link_count(LinkStatus.INVALID)}")
 
-    def delete_lockfiles(self):
-        """Deletes the lockfiles."""
-        for lockfile_handler in self.lockfile_handlers.values():
-            lockfile_handler.delete()
+
+    def create_table_if_not_exists(self):
+        """
+        Creates the required table if it does not exist.
+        """
+        create_table_query = """
+        CREATE TABLE IF NOT EXISTS job_links (
+            search_term TEXT NOT NULL,
+            job_url TEXT NOT NULL,
+            job_number TEXT PRIMARY KEY,
+            title TEXT,
+            comments TEXT,
+            requirements TEXT,
+            follow_up TEXT,
+            highlight TEXT,
+            applied TEXT,
+            contact TEXT,
+            application_comments TEXT,
+            valid BOOLEAN DEFAULT FALSE
+        );
+        """
+        self.db_handler.execute(create_table_query)
 
     def get_link_count(self, status: LinkStatus) -> int:
-        """Return the current count of links for a provided status."""
-        return sum(len(links) for links in self.links[status].values())
+        """
+        Return the current count of links for a provided status.
+        """
+        is_valid = (status == LinkStatus.VALID)
+        
+        query = """
+        SELECT COUNT(*) FROM job_links WHERE valid = %s;
+        """
+        
+        result = self.db_handler.fetch(query, (is_valid,))
+        
+        return result[0][0]
+
 
     def get_links_difference(self, status: LinkStatus) -> int:
         """
@@ -209,22 +213,38 @@ class JobData:
                     link_dict[search_term].append([url, job_number])
                     job_numbers_set.add(job_number)
 
-    def job_in_links(self, job):
+    def job_in_links(self, job_number):
         """
-        Checks if a job is present in either the validated or invalidated links set.
-        Returns a dictionary indicating the presence of the job in each set.
+        Checks if a job is present in the database and its validity status.
+        Returns a dictionary indicating the presence of the job and its validity.
         """
-        results = {}
-        for status in LinkStatus:
-            results[status] = job in self.job_numbers[status]
-        return results
+        query = """
+        SELECT valid FROM job_links WHERE job_number = %s;
+        """
+        
+        result = self.db_handler.fetch(query, (job_number,))
+        
+        if not result:
+            return {LinkStatus.VALID: False, LinkStatus.INVALID: False}
+        
+        is_valid = result[0][0]
+        return {LinkStatus.VALID: is_valid, LinkStatus.INVALID: not is_valid}
+
 
     def add_new_link(self, search_term, url, job_number, status: LinkStatus):
         """
-        Adds a new job link to the internal storage, categorized by the provided status.
-        Updates both the link dictionary and job number set.
+        Adds a new job link to the database, categorized by the provided status.
         """
-        if search_term not in self.links[status]:
-            self.links[status][search_term] = []
-        self.links[status][search_term].append([url, job_number])
-        self.job_numbers[status].add(job_number)
+        is_valid = (status == LinkStatus.VALID)
+
+        # Construct the insertion query
+        query = """
+        INSERT INTO job_links (search_term, job_url, job_number, valid) 
+        VALUES (%s, %s, %s, %s) 
+        ON CONFLICT (job_number) 
+        DO NOTHING;
+        """
+
+        # Execute the query
+        self.db_handler.execute(query, (search_term, url, job_number, is_valid))
+
