@@ -5,7 +5,7 @@ Usage:
 
 ```python
 scraper = JobScraper()
-scraper.perform_searches(["C++", "python"])
+scraper.perform_searches(["C++", "python", "data science"])
 ```
 
 The resulting job URLs are stored in a PostgreSQL database, categorized based on whether the search term was found in the resulting job description or not.
@@ -29,16 +29,16 @@ https://url.for.job.search/job/[job_number]
 
 To store job data, this application now uses a PostgreSQL database. Before running the application, ensure that you've set up a PostgreSQL instance and added the appropriate configuration.
 
-### Setting Up PostgreSQL:
+### Setting Up PostgreSQL
 
 - Install and start the PostgreSQL service.
 - Create a database and user for this application.
 
-### Configuration:
+### Configuration
 
 Add the database connection details to the existing configuration file `~/.scraper/scraper.conf`. Under a new `[DATABASE]` section, provide the following details:
 
-```
+```ini
 [DATABASE]
 DB_NAME = your_db_name
 DB_USER = your_db_user
@@ -49,7 +49,7 @@ DB_PORT = 5432
 
 Replace `your_db_name`, `your_db_user`, and `your_db_password` with your actual database name, user, and password.
 
-### Permissions:
+### Permissions
 
 Ensure that the `scraper.conf` file is readable only by the user running the application to prevent potential security risks.
 
