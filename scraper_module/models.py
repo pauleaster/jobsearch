@@ -59,7 +59,7 @@ class JobData:
         self.db_handler.connect()
 
         # Ensure the required table exists
-        self.create_table_if_not_exists()
+        self.create_tables_if_not_exists()
 
         # Store the initial counts
         self.initial_counts = {
@@ -70,16 +70,25 @@ class JobData:
         print(f"Initial Validated links #{self.get_link_count(LinkStatus.VALID)}")
         print(f"Initial Invalidated links #{self.get_link_count(LinkStatus.INVALID)}")
 
+    def _extract_job_number_from_url(self, url):
+        """
+        Extracts the job number from the provided URL by looking for the characters
+        after the last forward slash.
+        """
+        return url.split("/")[-1]
 
-    def create_table_if_not_exists(self):
+
+
+    def create_tables_if_not_exists(self):
         """
-        Creates the required table if it does not exist.
+        Creates the required tables if they do not exist.
         """
-        create_table_query = """
-        CREATE TABLE IF NOT EXISTS job_links (
-            search_term TEXT NOT NULL,
-            job_url TEXT NOT NULL,
-            job_number TEXT PRIMARY KEY,
+
+        # Table for jobs
+        create_jobs_table_query = """
+        CREATE TABLE IF NOT EXISTS jobs (
+            job_id SERIAL PRIMARY KEY,
+            job_url TEXT UNIQUE NOT NULL,
             title TEXT,
             comments TEXT,
             requirements TEXT,
@@ -91,7 +100,28 @@ class JobData:
             valid BOOLEAN DEFAULT FALSE
         );
         """
-        self.db_handler.execute(create_table_query)
+
+        # Table for search terms
+        create_search_terms_table_query = """
+        CREATE TABLE IF NOT EXISTS search_terms (
+            term_id SERIAL PRIMARY KEY,
+            term_text TEXT UNIQUE NOT NULL
+        );
+        """
+
+        # Junction table for many-to-many relationship between jobs and search terms
+        create_job_search_terms_table_query = """
+        CREATE TABLE IF NOT EXISTS job_search_terms (
+            job_id INT REFERENCES jobs(job_id),
+            term_id INT REFERENCES search_terms(term_id),
+            PRIMARY KEY (job_id, term_id)
+        );
+        """
+
+        self.db_handler.execute(create_jobs_table_query)
+        self.db_handler.execute(create_search_terms_table_query)
+        self.db_handler.execute(create_job_search_terms_table_query)
+
 
     def get_link_count(self, status: LinkStatus) -> int:
         """
@@ -100,7 +130,7 @@ class JobData:
         is_valid = (status == LinkStatus.VALID)
         
         query = """
-        SELECT COUNT(*) FROM job_links WHERE valid = %s;
+        SELECT COUNT(*) FROM jobs WHERE valid = %s;
         """
         
         result = self.db_handler.fetch(query, (is_valid,))
@@ -121,7 +151,7 @@ class JobData:
         Returns a dictionary indicating the presence of the job and its validity.
         """
         query = """
-        SELECT valid FROM job_links WHERE job_number = %s;
+        SELECT valid FROM jobs WHERE job_number = %s;
         """
         
         result = self.db_handler.fetch(query, (job_number,))
@@ -139,14 +169,31 @@ class JobData:
         """
         is_valid = (status == LinkStatus.VALID)
 
-        # Construct the insertion query
-        query = """
-        INSERT INTO job_links (search_term, job_url, job_number, valid) 
-        VALUES (%s, %s, %s, %s) 
+        # Insert/Update the job details
+        job_query = """
+        INSERT INTO job_links (job_number, job_url, valid) 
+        VALUES (%s, %s, %s) 
         ON CONFLICT (job_number) 
+        DO UPDATE SET valid = EXCLUDED.valid
+        WHERE EXCLUDED.valid;  -- only update the validity if the new status is True
+        """
+
+        self.db_handler.execute(job_query, (job_number, url, is_valid))
+
+        # Insert the associated search term
+        search_term_query = """
+        INSERT INTO job_search_terms (job_number, search_term) 
+        VALUES (%s, %s) 
+        ON CONFLICT (job_number, search_term)
         DO NOTHING;
         """
 
-        # Execute the query
-        self.db_handler.execute(query, (search_term, url, job_number, is_valid))
+        self.db_handler.execute(search_term_query, (job_number, search_term))
 
+
+    def save_link(self, search_term, url, link_status):
+        """
+        Saves the provided link to the database, categorized by the provided status.
+        """
+        job_number = self._extract_job_number_from_url(url)
+        self.add_new_link(search_term, url, job_number, link_status)
