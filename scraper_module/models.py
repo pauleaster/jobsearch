@@ -24,9 +24,9 @@ Note: Ensure lockfiles are managed properly, especially in multi-threaded scenar
 
 
 import os
-import csv
 from enum import Enum, auto
-from filelock import FileLock
+from .db_handler import DBHandler
+from .config import DB_NAME, DB_USER, DB_PASSWORD, DB_HOST, DB_PORT
 
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -42,77 +42,6 @@ class LinkStatus(Enum):
     VALID = auto()
     INVALID = auto()
 
-
-class CSVHandler:
-    """
-    Provides methods for reading and appending to csv files.
-    """
-
-    def __init__(self, filename):
-        """
-        Creates a CSVHandler instance with a filepath
-        in the parent directory.
-        """
-        self.filepath = os.path.join(parent_dir, filename)
-
-    def append_row(self, row):
-        """
-        Appends a row to the csv file.
-        """
-        with open(self.filepath, "a", newline="", encoding="utf-8") as file:
-            csv_writer = csv.writer(file)
-            csv_writer.writerow(row)
-
-    def read_rows(self):
-        """
-        Reads the rows from the csv file and returns them as a list.
-        """
-        if os.path.exists(self.filepath):
-            with open(self.filepath, "r", encoding="utf-8") as file:
-                csv_reader = csv.reader(file)
-                return list(csv_reader)
-        return []
-
-
-class LockFileHandler:
-    """
-    Manages lockfiles for the csv files.
-    """
-
-    def __init__(self, lockfilename):
-        """
-        Creates a LockFileHandler instance with a filepath
-        """
-        self.lockfilename = os.path.join(current_dir, lockfilename)
-        self.lock = FileLock(self.lockfilename)
-
-    def delete(self):
-        """
-        Deletes the lockfile if it exists.
-        """
-        if os.path.exists(self.lockfilename):
-            os.remove(self.lockfilename)
-            print(f"Removed lockfile: {self.lockfilename}")
-
-    def __enter__(self):
-        """
-        Acquires the lock when entering the context of a `with` statement.
-
-        This allows for safely working with resources, such as files,
-        ensuring that only one operation accesses them at a given time.
-        """
-        self.lock.acquire()
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """
-        Releases the lock when exiting the context of a `with` statement.
-
-        This ensures that any other operations waiting for the lock can
-        proceed, and the resource (e.g., a file) is freed up for other uses.
-        """
-        self.lock.release()
-
-
 class JobData:
     """
     Handles the storage, management, and manipulation of job-related data
@@ -125,32 +54,12 @@ class JobData:
         job counts, CSV handlers, lock file handlers, and initial counts.
         Also, initializes the job data by reading existing CSV files.
         """
-        self.links = {LinkStatus.VALID: {}, LinkStatus.INVALID: {}}
+        # Initialize DB connection
+        self.db_handler = DBHandler(dbname=DB_NAME, user=DB_USER, password=DB_PASSWORD, host=DB_HOST, port=DB_PORT)
+        self.db_handler.connect()
 
-        # A dictionary for storing job numbers for each search_term
-        self.job_numbers = {LinkStatus.VALID: set(), LinkStatus.INVALID: set()}
-        self.csv_files = {
-            LinkStatus.VALID: "validated_links.csv",
-            LinkStatus.INVALID: "invalidated_links.csv",
-        }
-        self.csv_handlers = {
-            LinkStatus.VALID: CSVHandler(self.csv_files[LinkStatus.VALID]),
-            LinkStatus.INVALID: CSVHandler(self.csv_files[LinkStatus.INVALID]),
-        }
-
-        self.lockfilenames = {
-            LinkStatus.VALID: "validated_lockfile",
-            LinkStatus.INVALID: "invalidated_lockfile",
-        }
-
-        self.lockfile_handlers = {
-            LinkStatus.VALID: LockFileHandler(self.lockfilenames[LinkStatus.VALID]),
-            LinkStatus.INVALID: LockFileHandler(self.lockfilenames[LinkStatus.INVALID]),
-        }
-
-        # Check for lock files and delete if they exist
-        self.delete_lockfiles()
-        self.read_csv_files()
+        # Ensure the required table exists
+        self.create_tables_if_not_exists()
 
         # Store the initial counts
         self.initial_counts = {
@@ -161,14 +70,75 @@ class JobData:
         print(f"Initial Validated links #{self.get_link_count(LinkStatus.VALID)}")
         print(f"Initial Invalidated links #{self.get_link_count(LinkStatus.INVALID)}")
 
-    def delete_lockfiles(self):
-        """Deletes the lockfiles."""
-        for lockfile_handler in self.lockfile_handlers.values():
-            lockfile_handler.delete()
+    def extract_job_number_from_url(self, url):
+        """
+        Extracts the job number from the provided URL by looking for the characters
+        after the last forward slash.
+        """
+        return url.split("/")[-1]
+
+
+
+    def create_tables_if_not_exists(self):
+        """
+        Creates the required tables if they do not exist.
+        """
+
+        # Table for jobs
+        create_jobs_table_query = """
+        CREATE TABLE IF NOT EXISTS jobs (
+            job_id SERIAL PRIMARY KEY,
+            job_number TEXT UNIQUE NOT NULL,
+            job_url TEXT UNIQUE NOT NULL,
+            title TEXT,
+            comments TEXT,
+            requirements TEXT,
+            follow_up TEXT,
+            highlight TEXT,
+            applied TEXT,
+            contact TEXT,
+            application_comments TEXT,
+            job_html TEXT,
+            valid BOOLEAN DEFAULT FALSE
+        );
+        """
+
+        # Table for search terms
+        create_search_terms_table_query = """
+        CREATE TABLE IF NOT EXISTS search_terms (
+            term_id SERIAL PRIMARY KEY,
+            term_text TEXT UNIQUE NOT NULL
+        );
+        """
+
+        # Junction table for many-to-many relationship between jobs and search terms
+        create_job_search_terms_table_query = """
+        CREATE TABLE IF NOT EXISTS job_search_terms (
+            job_id INT REFERENCES jobs(job_id),
+            term_id INT REFERENCES search_terms(term_id),
+            PRIMARY KEY (job_id, term_id)
+        );
+        """
+
+        self.db_handler.execute(create_jobs_table_query)
+        self.db_handler.execute(create_search_terms_table_query)
+        self.db_handler.execute(create_job_search_terms_table_query)
+
 
     def get_link_count(self, status: LinkStatus) -> int:
-        """Return the current count of links for a provided status."""
-        return sum(len(links) for links in self.links[status].values())
+        """
+        Return the current count of links for a provided status.
+        """
+        is_valid = (status == LinkStatus.VALID)
+        
+        query = """
+        SELECT COUNT(*) FROM jobs WHERE valid = %s;
+        """
+        
+        result = self.db_handler.fetch(query, (is_valid,))
+        
+        return result[0][0]
+
 
     def get_links_difference(self, status: LinkStatus) -> int:
         """
@@ -177,54 +147,72 @@ class JobData:
         """
         return self.get_link_count(status) - self.initial_counts[status]
 
-    def save_link_to_csv(self, search_term, url, status: LinkStatus):
+    def job_in_links(self, job_number):
         """
-        Saves a job link to its respective CSV file (either validated or
-        invalidated) based on its status. Uses a lock to ensure safe
-        write operations.
+        Checks if a job is present in the database and its validity status.
+        Returns a dictionary indicating the presence of the job and its validity.
         """
+        query = """
+        SELECT valid FROM jobs WHERE job_number = %s;
+        """
+        
+        result = self.db_handler.fetch(query, (job_number,))
+        
+        if not result:
+            return {LinkStatus.VALID: False, LinkStatus.INVALID: False}
+        
+        is_valid = result[0][0]
+        return {LinkStatus.VALID: is_valid, LinkStatus.INVALID: not is_valid}
 
-        job_number = url.split("/")[-1]
-        row = [search_term, url, job_number]
 
-        with self.lockfile_handlers[status]:
-            self.csv_handlers[status].append_row(row)
+    def add_new_link(self, search_term, url, job_number, status: LinkStatus, job_html=None):
+        """
+        Adds a new job link to the database, categorized by the provided status.
+        """
+        is_valid = (status == LinkStatus.VALID)
 
-    def read_csv_files(self):
+        # Insert/Update the job details
+        job_query = """
+        INSERT INTO jobs (job_number, job_url, valid, job_html) 
+        VALUES (%s, %s, %s, %s) 
+        ON CONFLICT (job_number) 
+        DO UPDATE SET 
+            valid = EXCLUDED.valid,
+            job_html = EXCLUDED.job_html
+        WHERE EXCLUDED.valid;  -- only update the validity and html if the new status is True
         """
-        Reads job links from their respective CSV files (either validated
-        or invalidated) and populates the internal storage structures.
-        Uses a lock to ensure safe read operations.
-        """
-        for status in LinkStatus:
-            link_dict = self.links[status]
-            job_numbers_set = self.job_numbers[status]
+        self.db_handler.execute(job_query, (job_number, url, is_valid, job_html))
 
-            with self.lockfile_handlers[status]:
-                rows = self.csv_handlers[status].read_rows()
-                for row in rows:
-                    search_term, url, job_number = row
-                    if search_term not in link_dict.keys():
-                        link_dict[search_term] = []
-                    link_dict[search_term].append([url, job_number])
-                    job_numbers_set.add(job_number)
+        # Insert the search term if it doesn't exist
+        search_term_insert_query = """
+        INSERT INTO search_terms (term_text) 
+        VALUES (%s) 
+        ON CONFLICT (term_text)
+        DO NOTHING;
+        """
+        self.db_handler.execute(search_term_insert_query, (search_term,))
 
-    def job_in_links(self, job):
-        """
-        Checks if a job is present in either the validated or invalidated links set.
-        Returns a dictionary indicating the presence of the job in each set.
-        """
-        results = {}
-        for status in LinkStatus:
-            results[status] = job in self.job_numbers[status]
-        return results
+        # Fetch the job_id and term_id
+        job_id_query = "SELECT job_id FROM jobs WHERE job_number = %s;"
+        term_id_query = "SELECT term_id FROM search_terms WHERE term_text = %s;"
+        job_id = self.db_handler.fetch(job_id_query, (job_number,))[0][0]
+        term_id = self.db_handler.fetch(term_id_query, (search_term,))[0][0]
 
-    def add_new_link(self, search_term, url, job_number, status: LinkStatus):
+        # Insert the association between job and search term
+        search_term_association_query = """
+        INSERT INTO job_search_terms (job_id, term_id) 
+        VALUES (%s, %s) 
+        ON CONFLICT (job_id, term_id)
+        DO NOTHING;
         """
-        Adds a new job link to the internal storage, categorized by the provided status.
-        Updates both the link dictionary and job number set.
+        self.db_handler.execute(search_term_association_query, (job_id, term_id))
+
+
+
+
+    def save_link(self, search_term, url, link_status):
         """
-        if search_term not in self.links[status]:
-            self.links[status][search_term] = []
-        self.links[status][search_term].append([url, job_number])
-        self.job_numbers[status].add(job_number)
+        Saves the provided link to the database, categorized by the provided status.
+        """
+        job_number = self.extract_job_number_from_url(url)
+        self.add_new_link(search_term, url, job_number, link_status)
