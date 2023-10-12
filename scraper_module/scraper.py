@@ -10,7 +10,14 @@ import traceback
 
 from .handlers import NetworkHandler
 from .models import JobData, LinkStatus
-from .config import JOB_SCRAPER_URL
+from .config import JOB_SCRAPER_DEFAULT_URL, JOB_SCRAPER_REMOTE_URL
+
+USE_REMOTE = False  # Set this constant to either True or False based on your requirements
+
+if USE_REMOTE:
+    JOB_SCRAPER_URL = JOB_SCRAPER_REMOTE_URL
+else:
+    JOB_SCRAPER_URL = JOB_SCRAPER_DEFAULT_URL
 
 
 class JobScraper:
@@ -42,18 +49,24 @@ class JobScraper:
         soup = self.network_handler.get_soup(url)
         if soup:
             soup_str = str(soup).lower()
-            valid = search_term.lower() in soup_str
+            search_terms = search_term.lower().split()
+            valid = all(term in soup_str for term in search_terms)
+            
         if valid:
             link_status = LinkStatus.VALID
-        else:
-            link_status = LinkStatus.INVALID
-        self.job_data.save_link_to_csv(search_term, url, link_status)
-        return valid
+            job_html = str(soup)
+            # Clean the job_html to remove problematic characters
+            job_html = job_html.encode('utf-8', 'ignore').decode('utf-8')
+            return valid, job_html
+
+        link_status = LinkStatus.INVALID
+        self.job_data.save_link(search_term, url, link_status)
+        return valid, None
 
     def process_link(self, link, search_term):
         """Process an individual link to determine its validity and action."""
         url = link.get_attribute("href").split("?")[0]
-        job_number = url.split("/")[-1]
+        job_number = self.job_data.extract_job_number_from_url(url)
         link_status = self.job_data.job_in_links(job_number)
 
         if link_status[LinkStatus.VALID]:
@@ -63,8 +76,10 @@ class JobScraper:
             print("x", end="", flush=True)
             return
 
-        if self.is_valid_link(search_term, url):
-            self.job_data.add_new_link(search_term, url, job_number, LinkStatus.VALID)
+        valid, job_html = self.is_valid_link(search_term, url)
+
+        if valid:
+            self.job_data.add_new_link(search_term, url, job_number, LinkStatus.VALID, job_html)
             print("V", end="", flush=True)
         else:
             self.job_data.add_new_link(search_term, url, job_number, LinkStatus.INVALID)
@@ -96,11 +111,6 @@ class JobScraper:
         try:
             for search_term in search_terms:
                 print(f"Processing search {search_term}")
-                # initialise an empty list if key does not exist
-                for status in LinkStatus:
-                    if search_term not in self.job_data.links[status]:
-                        self.job_data.links[status][search_term] = []
-
                 # enter search term and submit
                 self.network_handler.initiate_search(search_term)
                 page_number = 1
@@ -131,4 +141,11 @@ class JobScraper:
             except Exception as exception: # pylint: disable=broad-except
                 print(f"Exception while trying to close the browser: {exception}")
                 traceback.print_exc()
-            self.job_data.delete_lockfiles()
+            
+            # attempt to close the database connection
+            try:
+                print("Closing database connection...")
+                self.job_data.db_handler.close()
+            except Exception as exception: # pylint: disable=broad-except
+                print(f"Exception while trying to close the database connection: {exception}")
+                traceback.print_exc()
