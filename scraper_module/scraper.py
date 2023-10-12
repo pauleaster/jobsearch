@@ -54,9 +54,12 @@ class JobScraper:
             
         if valid:
             link_status = LinkStatus.VALID
-            return valid, str(soup)
-        else:
-            link_status = LinkStatus.INVALID
+            job_html = str(soup)
+            # Clean the job_html to remove problematic characters
+            job_html = job_html.encode('utf-8', 'ignore').decode('utf-8')
+            return valid, job_html
+
+        link_status = LinkStatus.INVALID
         self.job_data.save_link(search_term, url, link_status)
         return valid, None
 

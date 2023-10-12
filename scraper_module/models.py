@@ -181,7 +181,6 @@ class JobData:
             job_html = EXCLUDED.job_html
         WHERE EXCLUDED.valid;  -- only update the validity and html if the new status is True
         """
-
         self.db_handler.execute(job_query, (job_number, url, is_valid, job_html))
 
         # Insert the search term if it doesn't exist
@@ -191,18 +190,23 @@ class JobData:
         ON CONFLICT (term_text)
         DO NOTHING;
         """
-
         self.db_handler.execute(search_term_insert_query, (search_term,))
-        
-        # Insert the associated search term
-        search_term_query = """
-        INSERT INTO job_search_terms (job_number, search_term) 
+
+        # Fetch the job_id and term_id
+        job_id_query = "SELECT job_id FROM jobs WHERE job_number = %s;"
+        term_id_query = "SELECT term_id FROM search_terms WHERE term_text = %s;"
+        job_id = self.db_handler.fetch(job_id_query, (job_number,))[0][0]
+        term_id = self.db_handler.fetch(term_id_query, (search_term,))[0][0]
+
+        # Insert the association between job and search term
+        search_term_association_query = """
+        INSERT INTO job_search_terms (job_id, term_id) 
         VALUES (%s, %s) 
-        ON CONFLICT (job_number, search_term)
+        ON CONFLICT (job_id, term_id)
         DO NOTHING;
         """
+        self.db_handler.execute(search_term_association_query, (job_id, term_id))
 
-        self.db_handler.execute(search_term_query, (job_number, search_term))
 
 
 
