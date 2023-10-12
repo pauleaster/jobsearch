@@ -54,15 +54,16 @@ class JobScraper:
             
         if valid:
             link_status = LinkStatus.VALID
+            return valid, str(soup)
         else:
             link_status = LinkStatus.INVALID
         self.job_data.save_link(search_term, url, link_status)
-        return valid
+        return valid, None
 
     def process_link(self, link, search_term):
         """Process an individual link to determine its validity and action."""
         url = link.get_attribute("href").split("?")[0]
-        job_number = url.split("/")[-1]
+        job_number = self.job_data.extract_job_number_from_url(url)
         link_status = self.job_data.job_in_links(job_number)
 
         if link_status[LinkStatus.VALID]:
@@ -72,8 +73,10 @@ class JobScraper:
             print("x", end="", flush=True)
             return
 
-        if self.is_valid_link(search_term, url):
-            self.job_data.add_new_link(search_term, url, job_number, LinkStatus.VALID)
+        valid, job_html = self.is_valid_link(search_term, url)
+
+        if valid:
+            self.job_data.add_new_link(search_term, url, job_number, LinkStatus.VALID, job_html)
             print("V", end="", flush=True)
         else:
             self.job_data.add_new_link(search_term, url, job_number, LinkStatus.INVALID)
@@ -135,4 +138,11 @@ class JobScraper:
             except Exception as exception: # pylint: disable=broad-except
                 print(f"Exception while trying to close the browser: {exception}")
                 traceback.print_exc()
-
+            
+            # attempt to close the database connection
+            try:
+                print("Closing database connection...")
+                self.job_data.db_handler.close()
+            except Exception as exception: # pylint: disable=broad-except
+                print(f"Exception while trying to close the database connection: {exception}")
+                traceback.print_exc()
