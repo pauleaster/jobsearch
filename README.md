@@ -10,7 +10,9 @@ scraper.perform_searches(["C++", "python", "data science"])
 
 The resulting job URLs are stored in a PostgreSQL database, categorized based on whether the search term was found in the resulting job description or not.
 
-Some job websites use AI techniques to perform searches, and some results are promoted for commercial reasons. Therefore, the search term is not always present in the resulting job description. An additional search is performed to ensure that the search term is present in the job descriptions.
+Some job websites use AI techniques to perform searches, and some results are promoted for commercial reasons. Therefore, the search term is not always present in the resulting job description. This application performs an additional search to ensure that the search term is explicitly present in the job descriptions.
+
+## URL Configuration
 
 To set up the URL to be searched, enter the following data in the file `~/.scraper/scraper.conf`:
 

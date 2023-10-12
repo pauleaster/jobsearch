@@ -24,9 +24,7 @@ Note: Ensure lockfiles are managed properly, especially in multi-threaded scenar
 
 
 import os
-import csv
 from enum import Enum, auto
-from filelock import FileLock
 from .db_handler import DBHandler
 from .config import DB_NAME, DB_USER, DB_PASSWORD, DB_HOST, DB_PORT
 
@@ -43,77 +41,6 @@ class LinkStatus(Enum):
 
     VALID = auto()
     INVALID = auto()
-
-
-class CSVHandler:
-    """
-    Provides methods for reading and appending to csv files.
-    """
-
-    def __init__(self, filename):
-        """
-        Creates a CSVHandler instance with a filepath
-        in the parent directory.
-        """
-        self.filepath = os.path.join(parent_dir, filename)
-
-    def append_row(self, row):
-        """
-        Appends a row to the csv file.
-        """
-        with open(self.filepath, "a", newline="", encoding="utf-8") as file:
-            csv_writer = csv.writer(file)
-            csv_writer.writerow(row)
-
-    def read_rows(self):
-        """
-        Reads the rows from the csv file and returns them as a list.
-        """
-        if os.path.exists(self.filepath):
-            with open(self.filepath, "r", encoding="utf-8") as file:
-                csv_reader = csv.reader(file)
-                return list(csv_reader)
-        return []
-
-
-class LockFileHandler:
-    """
-    Manages lockfiles for the csv files.
-    """
-
-    def __init__(self, lockfilename):
-        """
-        Creates a LockFileHandler instance with a filepath
-        """
-        self.lockfilename = os.path.join(current_dir, lockfilename)
-        self.lock = FileLock(self.lockfilename)
-
-    def delete(self):
-        """
-        Deletes the lockfile if it exists.
-        """
-        if os.path.exists(self.lockfilename):
-            os.remove(self.lockfilename)
-            print(f"Removed lockfile: {self.lockfilename}")
-
-    def __enter__(self):
-        """
-        Acquires the lock when entering the context of a `with` statement.
-
-        This allows for safely working with resources, such as files,
-        ensuring that only one operation accesses them at a given time.
-        """
-        self.lock.acquire()
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """
-        Releases the lock when exiting the context of a `with` statement.
-
-        This ensures that any other operations waiting for the lock can
-        proceed, and the resource (e.g., a file) is freed up for other uses.
-        """
-        self.lock.release()
-
 
 class JobData:
     """
@@ -133,6 +60,13 @@ class JobData:
 
         # Ensure the required table exists
         self.create_table_if_not_exists()
+
+        # Store the initial counts
+        self.initial_counts = {
+            LinkStatus.VALID: self.get_link_count(LinkStatus.VALID),
+            LinkStatus.INVALID: self.get_link_count(LinkStatus.INVALID),
+        }
+
         print(f"Initial Validated links #{self.get_link_count(LinkStatus.VALID)}")
         print(f"Initial Invalidated links #{self.get_link_count(LinkStatus.INVALID)}")
 
@@ -180,38 +114,6 @@ class JobData:
         initial count to the current count for a given status.
         """
         return self.get_link_count(status) - self.initial_counts[status]
-
-    def save_link_to_csv(self, search_term, url, status: LinkStatus):
-        """
-        Saves a job link to its respective CSV file (either validated or
-        invalidated) based on its status. Uses a lock to ensure safe
-        write operations.
-        """
-
-        job_number = url.split("/")[-1]
-        row = [search_term, url, job_number]
-
-        with self.lockfile_handlers[status]:
-            self.csv_handlers[status].append_row(row)
-
-    def read_csv_files(self):
-        """
-        Reads job links from their respective CSV files (either validated
-        or invalidated) and populates the internal storage structures.
-        Uses a lock to ensure safe read operations.
-        """
-        for status in LinkStatus:
-            link_dict = self.links[status]
-            job_numbers_set = self.job_numbers[status]
-
-            with self.lockfile_handlers[status]:
-                rows = self.csv_handlers[status].read_rows()
-                for row in rows:
-                    search_term, url, job_number = row
-                    if search_term not in link_dict.keys():
-                        link_dict[search_term] = []
-                    link_dict[search_term].append([url, job_number])
-                    job_numbers_set.add(job_number)
 
     def job_in_links(self, job_number):
         """
