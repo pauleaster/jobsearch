@@ -88,6 +88,7 @@ class JobData:
         create_jobs_table_query = """
         CREATE TABLE IF NOT EXISTS jobs (
             job_id SERIAL PRIMARY KEY,
+            job_number TEXT UNIQUE NOT NULL,
             job_url TEXT UNIQUE NOT NULL,
             title TEXT,
             comments TEXT,
@@ -172,7 +173,7 @@ class JobData:
 
         # Insert/Update the job details
         job_query = """
-        INSERT INTO job_links (job_number, job_url, valid, job_html) 
+        INSERT INTO jobs (job_number, job_url, valid, job_html) 
         VALUES (%s, %s, %s, %s) 
         ON CONFLICT (job_number) 
         DO UPDATE SET 
@@ -183,6 +184,16 @@ class JobData:
 
         self.db_handler.execute(job_query, (job_number, url, is_valid, job_html))
 
+        # Insert the search term if it doesn't exist
+        search_term_insert_query = """
+        INSERT INTO search_terms (term_text) 
+        VALUES (%s) 
+        ON CONFLICT (term_text)
+        DO NOTHING;
+        """
+
+        self.db_handler.execute(search_term_insert_query, (search_term,))
+        
         # Insert the associated search term
         search_term_query = """
         INSERT INTO job_search_terms (job_number, search_term) 
