@@ -56,7 +56,7 @@ class JobScraper:
             link_status = LinkStatus.VALID
         else:
             link_status = LinkStatus.INVALID
-        self.job_data.save_link_to_csv(search_term, url, link_status)
+        self.job_data.save_link(search_term, url, link_status)
         return valid
 
     def process_link(self, link, search_term):
@@ -105,11 +105,6 @@ class JobScraper:
         try:
             for search_term in search_terms:
                 print(f"Processing search {search_term}")
-                # initialise an empty list if key does not exist
-                for status in LinkStatus:
-                    if search_term not in self.job_data.links[status]:
-                        self.job_data.links[status][search_term] = []
-
                 # enter search term and submit
                 self.network_handler.initiate_search(search_term)
                 page_number = 1
@@ -140,4 +135,4 @@ class JobScraper:
             except Exception as exception: # pylint: disable=broad-except
                 print(f"Exception while trying to close the browser: {exception}")
                 traceback.print_exc()
-            self.job_data.delete_lockfiles()
+
