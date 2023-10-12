@@ -70,7 +70,7 @@ class JobData:
         print(f"Initial Validated links #{self.get_link_count(LinkStatus.VALID)}")
         print(f"Initial Invalidated links #{self.get_link_count(LinkStatus.INVALID)}")
 
-    def _extract_job_number_from_url(self, url):
+    def extract_job_number_from_url(self, url):
         """
         Extracts the job number from the provided URL by looking for the characters
         after the last forward slash.
@@ -97,6 +97,7 @@ class JobData:
             applied TEXT,
             contact TEXT,
             application_comments TEXT,
+            job_html TEXT,
             valid BOOLEAN DEFAULT FALSE
         );
         """
@@ -163,7 +164,7 @@ class JobData:
         return {LinkStatus.VALID: is_valid, LinkStatus.INVALID: not is_valid}
 
 
-    def add_new_link(self, search_term, url, job_number, status: LinkStatus):
+    def add_new_link(self, search_term, url, job_number, status: LinkStatus, job_html=None):
         """
         Adds a new job link to the database, categorized by the provided status.
         """
@@ -171,14 +172,16 @@ class JobData:
 
         # Insert/Update the job details
         job_query = """
-        INSERT INTO job_links (job_number, job_url, valid) 
-        VALUES (%s, %s, %s) 
+        INSERT INTO job_links (job_number, job_url, valid, job_html) 
+        VALUES (%s, %s, %s, %s) 
         ON CONFLICT (job_number) 
-        DO UPDATE SET valid = EXCLUDED.valid
-        WHERE EXCLUDED.valid;  -- only update the validity if the new status is True
+        DO UPDATE SET 
+            valid = EXCLUDED.valid,
+            job_html = EXCLUDED.job_html
+        WHERE EXCLUDED.valid;  -- only update the validity and html if the new status is True
         """
 
-        self.db_handler.execute(job_query, (job_number, url, is_valid))
+        self.db_handler.execute(job_query, (job_number, url, is_valid, job_html))
 
         # Insert the associated search term
         search_term_query = """
@@ -191,9 +194,10 @@ class JobData:
         self.db_handler.execute(search_term_query, (job_number, search_term))
 
 
+
     def save_link(self, search_term, url, link_status):
         """
         Saves the provided link to the database, categorized by the provided status.
         """
-        job_number = self._extract_job_number_from_url(url)
+        job_number = self.extract_job_number_from_url(url)
         self.add_new_link(search_term, url, job_number, link_status)
