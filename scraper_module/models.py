@@ -116,6 +116,7 @@ class JobData:
         CREATE TABLE IF NOT EXISTS job_search_terms (
             job_id INT REFERENCES jobs(job_id),
             term_id INT REFERENCES search_terms(term_id),
+            valid BOOLEAN DEFAULT FALSE,
             PRIMARY KEY (job_id, term_id)
         );
         """
@@ -174,16 +175,22 @@ class JobData:
         is_valid = (status == LinkStatus.VALID)
 
         # Insert/Update the job details
-        job_query = """
-        INSERT INTO jobs (job_number, job_url, valid, job_html) 
-        VALUES (%s, %s, %s, %s) 
-        ON CONFLICT (job_number) 
-        DO UPDATE SET 
-            valid = EXCLUDED.valid,
-            job_html = EXCLUDED.job_html
-        WHERE EXCLUDED.valid;  -- only update the validity and html if the new status is True
-        """
-        self.db_handler.execute(job_query, (job_number, url, is_valid, job_html))
+        if is_valid and job_html:
+            job_query = """
+            INSERT INTO jobs (job_number, job_url, job_html) 
+            VALUES (%s, %s, %s) 
+            ON CONFLICT (job_number) 
+            DO UPDATE SET 
+                job_html = COALESCE(jobs.job_html, EXCLUDED.job_html);  -- Update job_html only if it's NULL in the existing record
+            """
+            self.db_handler.execute(job_query, (job_number, url, job_html))
+        else:
+            job_query = """
+            INSERT INTO jobs (job_number, job_url) 
+            VALUES (%s, %s) 
+            ON CONFLICT (job_number) DO NOTHING;  -- Just insert if not exists, don't update
+            """
+            self.db_handler.execute(job_query, (job_number, url))
 
         # Insert the search term if it doesn't exist
         search_term_insert_query = """
@@ -200,14 +207,14 @@ class JobData:
         job_id = self.db_handler.fetch(job_id_query, (job_number,))[0][0]
         term_id = self.db_handler.fetch(term_id_query, (search_term,))[0][0]
 
-        # Insert the association between job and search term
+        # Insert/Update the association between job and search term with validity
         search_term_association_query = """
-        INSERT INTO job_search_terms (job_id, term_id) 
-        VALUES (%s, %s) 
+        INSERT INTO job_search_terms (job_id, term_id, valid) 
+        VALUES (%s, %s, %s) 
         ON CONFLICT (job_id, term_id)
-        DO NOTHING;
+        DO UPDATE SET valid = EXCLUDED.valid;
         """
-        self.db_handler.execute(search_term_association_query, (job_id, term_id))
+        self.db_handler.execute(search_term_association_query, (job_id, term_id, is_valid))
 
 
 
