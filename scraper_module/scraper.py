@@ -87,10 +87,10 @@ class JobScraper:
         valid, job_html = self.is_valid_link(search_term, url, job_html)
 
         if valid:
-            self.job_data.add_new_link(search_term, url, job_number, valid, job_html)
+            self.job_data.add_new_link(search_term, url, job_number, LinkStatus.VALID, job_html)
             print("V", end="", flush=True)
         else:
-            self.job_data.add_new_link(search_term, url, job_number, valid)
+            self.job_data.add_new_link(search_term, url, job_number, LinkStatus.INVALID)
             print("I", end="", flush=True)
 
     def process_page(self, search_term):
