@@ -38,51 +38,59 @@ class JobScraper:
         self.network_handler = NetworkHandler(self.url)
         self.job_data = JobData()
 
-    def is_valid_link(self, search_term, url):
+    def is_valid_link(self, search_term, url, job_html=None):
         """
         Validates if the provided URL's content contains the search term.
-        The link is then categorized as valid or invalid and saved to the
-        respective CSV. The validity status (boolean) is returned.
+        The link is then categorized as valid or invalid. The validity status 
+        (boolean) is returned along with the job_html if the link is valid.
         """
 
-        valid = False
-        soup = self.network_handler.get_soup(url)
-        if soup:
-            soup_str = str(soup).lower()
+        # If job_html is not provided, fetch the soup
+        if job_html is None:
+            soup = self.network_handler.get_soup(url)
+            if soup:
+                job_html = str(soup)
+
+        # Check for validity using job_html
+        if job_html:
+            soup_str = job_html.lower()
             search_terms = search_term.lower().split()
             valid = all(term in soup_str for term in search_terms)
-            
+        else:
+            valid = False
+
+        # If the link is valid, clean job_html
         if valid:
-            link_status = LinkStatus.VALID
-            job_html = str(soup)
             # Clean the job_html to remove problematic characters
             job_html = job_html.encode('utf-8', 'ignore').decode('utf-8')
-            return valid, job_html
 
-        link_status = LinkStatus.INVALID
-        self.job_data.save_link(search_term, url, link_status)
-        return valid, None
+        return valid, job_html if valid else None
+
+
 
     def process_link(self, link, search_term):
         """Process an individual link to determine its validity and action."""
         url = link.get_attribute("href").split("?")[0]
         job_number = self.job_data.extract_job_number_from_url(url)
-        link_status = self.job_data.job_in_links(job_number)
-
-        if link_status[LinkStatus.VALID]:
-            print("X", end="", flush=True)
-            return
-        if link_status[LinkStatus.INVALID]:
+        # link_status = self.job_data.job_in_links(job_number)
+        #  for a given job_number, get the search terms and validities as a dict(search_term: validity)
+        search_term_validities = self.job_data.get_search_terms_and_validities(job_number)
+        if search_term in search_term_validities:
+            if search_term_validities[search_term]:
+                print("X", end="", flush=True)
+                return
             print("x", end="", flush=True)
             return
-
-        valid, job_html = self.is_valid_link(search_term, url)
+        # this search_term is not in the database for this job_number
+        # get job_html if it exists
+        job_html = self.job_data.get_job_html(job_number)
+        valid, job_html = self.is_valid_link(search_term, url, job_html)
 
         if valid:
-            self.job_data.add_new_link(search_term, url, job_number, LinkStatus.VALID, job_html)
+            self.job_data.add_new_link(search_term, url, job_number, valid, job_html)
             print("V", end="", flush=True)
         else:
-            self.job_data.add_new_link(search_term, url, job_number, LinkStatus.INVALID)
+            self.job_data.add_new_link(search_term, url, job_number, valid)
             print("I", end="", flush=True)
 
     def process_page(self, search_term):
