@@ -132,7 +132,9 @@ class JobData:
         is_valid = (status == LinkStatus.VALID)
         
         query = """
-        SELECT COUNT(*) FROM jobs WHERE valid = %s;
+        SELECT COUNT(DISTINCT job_id) 
+        FROM job_search_terms 
+        WHERE valid = %s;
         """
         
         result = self.db_handler.fetch(query, (is_valid,))
