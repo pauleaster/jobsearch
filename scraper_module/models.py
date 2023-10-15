@@ -216,3 +216,64 @@ class JobData:
         """
         job_number = self.extract_job_number_from_url(url)
         self.add_new_link(search_term, url, job_number, link_status)
+
+
+    def get_search_terms_and_validities(self, job_number):
+        """
+        For a given job_number, retrieve the associated search terms and their validities.
+
+        Parameters:
+        - job_number (str): The job number to look up.
+
+        Returns:
+        - dict: A dictionary where keys are search terms and values are their corresponding validities (as booleans).
+        """
+
+        # Query to get the job_id for the given job_number
+        job_id_query = "SELECT job_id FROM jobs WHERE job_number = %s"
+        results = self.db_handler.fetch(job_id_query, (job_number,))
+        job_id_result = results[0] if results else None
+
+        # If no job is found with the given job_number, return an empty dictionary
+        if not job_id_result:
+            return {}
+
+        job_id = job_id_result[0]
+
+        # Query to get the search terms and their validities for the given job_id
+        query = """
+            SELECT st.term_text, jst.valid
+            FROM job_search_terms jst
+            JOIN search_terms st ON jst.term_id = st.term_id
+            WHERE jst.job_id = %s
+        """
+        results = self.db_handler.fetch(query, (job_id,))
+
+        # Convert the results into a dictionary: search_term -> validity
+        validities = {row[0]: row[1] for row in results}
+
+        return validities
+    
+    def get_job_html(self, job_number):
+        """
+        For a given job_number, retrieve the job_html.
+
+        Parameters:
+        - job_number (str): The job number to look up.
+
+        Returns:
+        - str or None: The job_html if found; otherwise, None.
+        """
+
+        # Query to get the job_html for the given job_number
+        query = "SELECT job_html FROM jobs WHERE job_number = %s"
+        results = self.db_handler.fetch(query, (job_number,))
+        job_html_result = results[0] if results else None
+
+        # If no job is found with the given job_number, return None
+        if not job_html_result:
+            return None
+
+        job_html = job_html_result[0]
+
+        return job_html
