@@ -116,6 +116,7 @@ class JobData:
         CREATE TABLE IF NOT EXISTS job_search_terms (
             job_id INT REFERENCES jobs(job_id),
             term_id INT REFERENCES search_terms(term_id),
+            valid BOOLEAN DEFAULT FALSE,
             PRIMARY KEY (job_id, term_id)
         );
         """
@@ -132,7 +133,9 @@ class JobData:
         is_valid = (status == LinkStatus.VALID)
         
         query = """
-        SELECT COUNT(*) FROM jobs WHERE valid = %s;
+        SELECT COUNT(DISTINCT job_id) 
+        FROM job_search_terms 
+        WHERE valid = %s;
         """
         
         result = self.db_handler.fetch(query, (is_valid,))
@@ -172,16 +175,22 @@ class JobData:
         is_valid = (status == LinkStatus.VALID)
 
         # Insert/Update the job details
-        job_query = """
-        INSERT INTO jobs (job_number, job_url, valid, job_html) 
-        VALUES (%s, %s, %s, %s) 
-        ON CONFLICT (job_number) 
-        DO UPDATE SET 
-            valid = EXCLUDED.valid,
-            job_html = EXCLUDED.job_html
-        WHERE EXCLUDED.valid;  -- only update the validity and html if the new status is True
-        """
-        self.db_handler.execute(job_query, (job_number, url, is_valid, job_html))
+        if is_valid and job_html:
+            job_query = """
+            INSERT INTO jobs (job_number, job_url, job_html) 
+            VALUES (%s, %s, %s) 
+            ON CONFLICT (job_number) 
+            DO UPDATE SET 
+                job_html = COALESCE(jobs.job_html, EXCLUDED.job_html);  -- Update job_html only if it's NULL in the existing record
+            """
+            self.db_handler.execute(job_query, (job_number, url, job_html))
+        else:
+            job_query = """
+            INSERT INTO jobs (job_number, job_url) 
+            VALUES (%s, %s) 
+            ON CONFLICT (job_number) DO NOTHING;  -- Just insert if not exists, don't update
+            """
+            self.db_handler.execute(job_query, (job_number, url))
 
         # Insert the search term if it doesn't exist
         search_term_insert_query = """
@@ -198,14 +207,14 @@ class JobData:
         job_id = self.db_handler.fetch(job_id_query, (job_number,))[0][0]
         term_id = self.db_handler.fetch(term_id_query, (search_term,))[0][0]
 
-        # Insert the association between job and search term
+        # Insert/Update the association between job and search term with validity
         search_term_association_query = """
-        INSERT INTO job_search_terms (job_id, term_id) 
-        VALUES (%s, %s) 
+        INSERT INTO job_search_terms (job_id, term_id, valid) 
+        VALUES (%s, %s, %s) 
         ON CONFLICT (job_id, term_id)
-        DO NOTHING;
+        DO UPDATE SET valid = EXCLUDED.valid;
         """
-        self.db_handler.execute(search_term_association_query, (job_id, term_id))
+        self.db_handler.execute(search_term_association_query, (job_id, term_id, is_valid))
 
 
 
@@ -216,3 +225,64 @@ class JobData:
         """
         job_number = self.extract_job_number_from_url(url)
         self.add_new_link(search_term, url, job_number, link_status)
+
+
+    def get_search_terms_and_validities(self, job_number):
+        """
+        For a given job_number, retrieve the associated search terms and their validities.
+
+        Parameters:
+        - job_number (str): The job number to look up.
+
+        Returns:
+        - dict: A dictionary where keys are search terms and values are their corresponding validities (as booleans).
+        """
+
+        # Query to get the job_id for the given job_number
+        job_id_query = "SELECT job_id FROM jobs WHERE job_number = %s"
+        results = self.db_handler.fetch(job_id_query, (job_number,))
+        job_id_result = results[0] if results else None
+
+        # If no job is found with the given job_number, return an empty dictionary
+        if not job_id_result:
+            return {}
+
+        job_id = job_id_result[0]
+
+        # Query to get the search terms and their validities for the given job_id
+        query = """
+            SELECT st.term_text, jst.valid
+            FROM job_search_terms jst
+            JOIN search_terms st ON jst.term_id = st.term_id
+            WHERE jst.job_id = %s
+        """
+        results = self.db_handler.fetch(query, (job_id,))
+
+        # Convert the results into a dictionary: search_term -> validity
+        validities = {row[0]: row[1] for row in results}
+
+        return validities
+    
+    def get_job_html(self, job_number):
+        """
+        For a given job_number, retrieve the job_html.
+
+        Parameters:
+        - job_number (str): The job number to look up.
+
+        Returns:
+        - str or None: The job_html if found; otherwise, None.
+        """
+
+        # Query to get the job_html for the given job_number
+        query = "SELECT job_html FROM jobs WHERE job_number = %s"
+        results = self.db_handler.fetch(query, (job_number,))
+        job_html_result = results[0] if results else None
+
+        # If no job is found with the given job_number, return None
+        if not job_html_result:
+            return None
+
+        job_html = job_html_result[0]
+
+        return job_html
