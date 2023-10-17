@@ -26,7 +26,7 @@ class JobScraper:
     based on search terms, and categorize them as valid or invalid links.
     """
 
-    def __init__(self):
+    def __init__(self, load_network_handler=None):
         """
         Initializes an instance of the JobScraper with attributes for
         managing the request timings, the scraper's URL, network handler,
@@ -35,7 +35,10 @@ class JobScraper:
         self.last_request_time = 0
         self.time_since_last_request = 0
         self.url = JOB_SCRAPER_URL
-        self.network_handler = NetworkHandler(self.url)
+        if load_network_handler:
+            self.network_handler = NetworkHandler(self.url)
+        else:
+            self.network_handler = None
         self.job_data = JobData()
 
     def is_valid_link(self, search_term, url, job_html=None):
