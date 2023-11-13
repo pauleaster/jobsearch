@@ -17,7 +17,7 @@ running any scraper tool that depends on this module.
 """
 import configparser
 import os
-from db_handler import AuthMethod
+from .auth_method import AuthMethod
 
 config = configparser.ConfigParser(interpolation=None)
 config_path = os.path.expanduser("~/.scraper/scraper.conf")
