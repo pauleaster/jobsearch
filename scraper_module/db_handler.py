@@ -24,12 +24,10 @@ Example:
     db.close()
 """
 
-from enum import Enum, auto
+
 import pyodbc
 
-class AuthMethod(Enum):
-    WINDOWS_AUTH = auto()
-    SQL_SERVER_AUTH = auto()
+from .auth_method import AuthMethod
 
 class DBHandler:
     """
@@ -75,14 +73,12 @@ class DBHandler:
         """Establish a connection to the database."""
         if self.auth_method == AuthMethod.SQL_SERVER_AUTH and self.user and self.password:
             # SQL Server Authentication
-            self.conn = pyodbc.connect(
-                f'DRIVER={{SQL Server}};SERVER={self.host};DATABASE={self.dbname};UID={self.user};PWD={self.password}'
-            )
+            connection_string = f'DRIVER={{SQL Server}};SERVER={self.host};DATABASE={self.dbname};UID={self.user};PWD={self.password}'
+            self.conn = pyodbc.connect(connection_string)
         elif self.auth_method == AuthMethod.WINDOWS_AUTH:
             # Windows Authentication
-            self.conn = pyodbc.connect(
-                f'DRIVER={{SQL Server}};SERVER={self.host};DATABASE={self.dbname};Trusted_Connection=yes;'
-            )
+            connection_string = f'DRIVER={{SQL Server}};SERVER={self.host};DATABASE={self.dbname};Trusted_Connection=yes;'
+            self.conn = pyodbc.connect(connection_string)
         else:
             raise ValueError("Invalid authentication method or credentials")
         return self.conn
@@ -90,7 +86,10 @@ class DBHandler:
     def execute(self, query, params=None):
         """Execute a SQL query."""
         with self.conn.cursor() as cur:
-            cur.execute(query, params)
+            if params is not None:
+                cur.execute(query, params)
+            else:
+                cur.execute(query)
             self.conn.commit()
 
     def fetch(self, query, params=None):
