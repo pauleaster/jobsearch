@@ -38,18 +38,30 @@ To store job data, this application now uses a PostgreSQL database. Before runni
 
 ### Configuration
 
-Add the database connection details to the existing configuration file `~/.scraper/scraper.conf`. Under a new `[DATABASE]` section, provide the following details:
+Add the database connection details to the existing configuration file `~/.scraper/scraper.conf`. Under a new `[DATABASE]` section, provide the details according to the authentication method you are using.
+
+For SQL Server Authentication, include the following:
 
 ```ini
 [DATABASE]
 DB_NAME = your_db_name
 DB_USER = your_db_user
 DB_PASSWORD = your_db_password
+AUTH_METHOD = SQL_SERVER_AUTH
 DB_HOST = localhost
-DB_PORT = 5432
+DB_PORT = 1433
 ```
 
-Replace `your_db_name`, `your_db_user`, and `your_db_password` with your actual database name, user, and password.
+For Windows Authentication, use:
+```ini
+[DATABASE]
+DB_NAME = your_db_name
+AUTH_METHOD = WINDOWS_AUTH
+DB_HOST = localhost
+DB_PORT = 1433
+```
+
+Replace `your_db_name`, `your_db_user`, and `your_db_password` with your actual database name, user, and password (for SQL Server Authentication). For Windows Authentication, `DB_USER` and `DB_PASSWORD` are not required as it uses the credentials of the logged-in Windows user.
 
 ### Permissions
 
