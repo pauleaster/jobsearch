@@ -29,12 +29,7 @@ https://url.for.job.search/job/[job_number]
 
 ## Database Configuration
 
-To store job data, this application now uses a PostgreSQL database. Before running the application, ensure that you've set up a PostgreSQL instance and added the appropriate configuration.
-
-### Setting Up PostgreSQL
-
-- Install and start the PostgreSQL service.
-- Create a database and user for this application.
+To store job data, this application now uses a SQL Server database. Before running the application, ensure that you've set up the SQL Server instance and added the appropriate configuration.
 
 ### Configuration
 
