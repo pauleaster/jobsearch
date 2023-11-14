@@ -26,7 +26,8 @@ Note: Ensure lockfiles are managed properly, especially in multi-threaded scenar
 import os
 from enum import Enum, auto
 from .db_handler import DBHandler
-from .config import DB_NAME, DB_USER, DB_PASSWORD, DB_HOST, DB_PORT
+from .config import DB_NAME, DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, AUTH_METHOD
+from .queries import SQLQueries
 
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -51,11 +52,11 @@ class JobData:
     def __init__(self):
         """
         Initializes an instance of JobData with storage structures for job links,
-        job counts, CSV handlers, lock file handlers, and initial counts.
+        job counts, SQL Server database handlers, and initial counts.
         Also, initializes the job data by reading existing CSV files.
         """
         # Initialize DB connection
-        self.db_handler = DBHandler(dbname=DB_NAME, user=DB_USER, password=DB_PASSWORD, host=DB_HOST, port=DB_PORT)
+        self.db_handler = DBHandler(dbname=DB_NAME, auth_method=AUTH_METHOD, user=DB_USER, password=DB_PASSWORD, host=DB_HOST, port=DB_PORT)
         self.db_handler.connect()
 
         # Ensure the required table exists
@@ -83,47 +84,9 @@ class JobData:
         """
         Creates the required tables if they do not exist.
         """
-
-        # Table for jobs
-        create_jobs_table_query = """
-        CREATE TABLE IF NOT EXISTS jobs (
-            job_id SERIAL PRIMARY KEY,
-            job_number TEXT UNIQUE NOT NULL,
-            job_url TEXT UNIQUE NOT NULL,
-            title TEXT,
-            comments TEXT,
-            requirements TEXT,
-            follow_up TEXT,
-            highlight TEXT,
-            applied TEXT,
-            contact TEXT,
-            application_comments TEXT,
-            job_html TEXT,
-            valid BOOLEAN DEFAULT FALSE
-        );
-        """
-
-        # Table for search terms
-        create_search_terms_table_query = """
-        CREATE TABLE IF NOT EXISTS search_terms (
-            term_id SERIAL PRIMARY KEY,
-            term_text TEXT UNIQUE NOT NULL
-        );
-        """
-
-        # Junction table for many-to-many relationship between jobs and search terms
-        create_job_search_terms_table_query = """
-        CREATE TABLE IF NOT EXISTS job_search_terms (
-            job_id INT REFERENCES jobs(job_id),
-            term_id INT REFERENCES search_terms(term_id),
-            valid BOOLEAN DEFAULT FALSE,
-            PRIMARY KEY (job_id, term_id)
-        );
-        """
-
-        self.db_handler.execute(create_jobs_table_query)
-        self.db_handler.execute(create_search_terms_table_query)
-        self.db_handler.execute(create_job_search_terms_table_query)
+        self.db_handler.execute(SQLQueries.CREATE_JOBS_TABLE_QUERY)
+        self.db_handler.execute(SQLQueries.CREATE_SEARCH_TERMS_TABLE_QUERY)
+        self.db_handler.execute(SQLQueries.CREATE_JOB_SEARCH_TERMS_TABLE_QUERY)
 
 
     def get_link_count(self, status: LinkStatus) -> int:
@@ -132,13 +95,7 @@ class JobData:
         """
         is_valid = (status == LinkStatus.VALID)
         
-        query = """
-        SELECT COUNT(DISTINCT job_id) 
-        FROM job_search_terms 
-        WHERE valid = %s;
-        """
-        
-        result = self.db_handler.fetch(query, (is_valid,))
+        result = self.db_handler.fetch(SQLQueries.GET_DISTINCT_JOBS_QUERY, (is_valid,))
         
         return result[0][0]
 
@@ -155,11 +112,8 @@ class JobData:
         Checks if a job is present in the database and its validity status.
         Returns a dictionary indicating the presence of the job and its validity.
         """
-        query = """
-        SELECT valid FROM jobs WHERE job_number = %s;
-        """
         
-        result = self.db_handler.fetch(query, (job_number,))
+        result = self.db_handler.fetch(SQLQueries.JOB_IN_LINKS_QUERY, (job_number,))
         
         if not result:
             return {LinkStatus.VALID: False, LinkStatus.INVALID: False}
@@ -176,45 +130,25 @@ class JobData:
 
         # Insert/Update the job details
         if is_valid and job_html:
-            job_query = """
-            INSERT INTO jobs (job_number, job_url, job_html) 
-            VALUES (%s, %s, %s) 
-            ON CONFLICT (job_number) 
-            DO UPDATE SET 
-                job_html = COALESCE(jobs.job_html, EXCLUDED.job_html);  -- Update job_html only if it's NULL in the existing record
-            """
-            self.db_handler.execute(job_query, (job_number, url, job_html))
+            self.db_handler.execute(SQLQueries.UPSERT_JOB_DETAILS_WITH_CONDITIONAL_HTML_UPDATE_QUERY, (job_number, job_html, job_number, job_number, url, job_html))
         else:
-            job_query = """
-            INSERT INTO jobs (job_number, job_url) 
-            VALUES (%s, %s) 
-            ON CONFLICT (job_number) DO NOTHING;  -- Just insert if not exists, don't update
-            """
-            self.db_handler.execute(job_query, (job_number, url))
+            self.db_handler.execute(SQLQueries.INSERT_JOB_IF_NOT_EXISTS_QUERY, (job_number, job_number, url))
+
 
         # Insert the search term if it doesn't exist
-        search_term_insert_query = """
-        INSERT INTO search_terms (term_text) 
-        VALUES (%s) 
-        ON CONFLICT (term_text)
-        DO NOTHING;
-        """
-        self.db_handler.execute(search_term_insert_query, (search_term,))
+        
+        self.db_handler.execute(SQLQueries.SEARCH_TERM_INSERT_QUERY, (search_term, search_term))
+
 
         # Fetch the job_id and term_id
-        job_id_query = "SELECT job_id FROM jobs WHERE job_number = %s;"
-        term_id_query = "SELECT term_id FROM search_terms WHERE term_text = %s;"
-        job_id = self.db_handler.fetch(job_id_query, (job_number,))[0][0]
-        term_id = self.db_handler.fetch(term_id_query, (search_term,))[0][0]
+        
+        job_id = self.db_handler.fetch(SQLQueries.JOB_ID_QUERY, (job_number,))[0][0]
+        term_id = self.db_handler.fetch(SQLQueries.TERM_ID_QUERY, (search_term,))[0][0]
 
         # Insert/Update the association between job and search term with validity
-        search_term_association_query = """
-        INSERT INTO job_search_terms (job_id, term_id, valid) 
-        VALUES (%s, %s, %s) 
-        ON CONFLICT (job_id, term_id)
-        DO UPDATE SET valid = EXCLUDED.valid;
-        """
-        self.db_handler.execute(search_term_association_query, (job_id, term_id, is_valid))
+        
+        self.db_handler.execute(SQLQueries.UPSERT_JOB_SEARCH_TERM_VALIDITY, (job_id, term_id, is_valid, is_valid))
+
 
 
 
@@ -239,8 +173,8 @@ class JobData:
         """
 
         # Query to get the job_id for the given job_number
-        job_id_query = "SELECT job_id FROM jobs WHERE job_number = %s"
-        results = self.db_handler.fetch(job_id_query, (job_number,))
+        
+        results = self.db_handler.fetch(SQLQueries.JOB_ID_QUERY, (job_number,))
         job_id_result = results[0] if results else None
 
         # If no job is found with the given job_number, return an empty dictionary
@@ -250,13 +184,8 @@ class JobData:
         job_id = job_id_result[0]
 
         # Query to get the search terms and their validities for the given job_id
-        query = """
-            SELECT st.term_text, jst.valid
-            FROM job_search_terms jst
-            JOIN search_terms st ON jst.term_id = st.term_id
-            WHERE jst.job_id = %s
-        """
-        results = self.db_handler.fetch(query, (job_id,))
+        
+        results = self.db_handler.fetch(SQLQueries.GET_SEARCH_TERM_VALIDITIES_FROM_JOB, (job_id,))
 
         # Convert the results into a dictionary: search_term -> validity
         validities = {row[0]: row[1] for row in results}
@@ -275,8 +204,7 @@ class JobData:
         """
 
         # Query to get the job_html for the given job_number
-        query = "SELECT job_html FROM jobs WHERE job_number = %s"
-        results = self.db_handler.fetch(query, (job_number,))
+        results = self.db_handler.fetch(SQLQueries.JOB_HTML_QUERY, (job_number,))
         job_html_result = results[0] if results else None
 
         # If no job is found with the given job_number, return None

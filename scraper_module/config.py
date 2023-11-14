@@ -17,6 +17,7 @@ running any scraper tool that depends on this module.
 """
 import configparser
 import os
+from .auth_method import AuthMethod
 
 config = configparser.ConfigParser(interpolation=None)
 config_path = os.path.expanduser("~/.scraper/scraper.conf")
@@ -40,10 +41,21 @@ if os.path.exists(config_path):
     # Reading the DATABASE section
     if "DATABASE" in config:
         DB_NAME = config["DATABASE"].get("DB_NAME")
-        DB_USER = config["DATABASE"].get("DB_USER")
-        DB_PASSWORD = config["DATABASE"].get("DB_PASSWORD")
+        if DB_NAME is None:
+            raise ValueError("DB_NAME is required but not found in DATABASE configuration!")
+
+        DB_USER = config["DATABASE"].get("DB_USER")  # Will be None if not present
+        DB_PASSWORD = config["DATABASE"].get("DB_PASSWORD")  # Will be None if not present
         DB_HOST = config["DATABASE"].get("DB_HOST", "localhost")
-        DB_PORT = config["DATABASE"].get("DB_PORT", "5432")
+        DB_PORT = config["DATABASE"].get("DB_PORT", "1433")  # Updated default port for SQL Server
+        
+        # New configuration for authentication method
+        auth_method_str = config["DATABASE"].get("AUTH_METHOD", "WINDOWS_AUTH")
+        if auth_method_str == "WINDOWS_AUTH":
+            AUTH_METHOD = AuthMethod.WINDOWS_AUTH
+        elif auth_method_str == "SQL_SERVER_AUTH":
+            AUTH_METHOD = AuthMethod.SQL_SERVER_AUTH
+
     else:
         raise ValueError("DATABASE section not found in the configuration file!")
 

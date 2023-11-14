@@ -23,7 +23,6 @@ search_terms = [f'{s}' for s in SEARCH_TERMS]
 
 if __name__ == "__main__":
     # Usage:
-    scraper = JobScraper()
+    scraper = JobScraper(load_network_handler=True)
     scraper.perform_searches(search_terms)
-    print(
-        "Finished scraping.\n")
+    print("Finished scraping.\n")
