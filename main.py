@@ -3,19 +3,27 @@ from scraper_module.scraper import JobScraper, LinkStatus
 
 
 SEARCH_TERMS = [
-    "C++",
     "python",
-    "software engineer",
-    "software developer",
-    "rust",    
     "pandas",
     "numpy",
     "matplotlib",
-    "C#",
-    "backend",
+    "scikit-learn",
+    "tensorflow",
+    "keras",
+    "pytorch",
     "data science",
     "artificial intelligence",
-    "chatgpt",
+    "chatgpt",    
+    "react",
+    "javascript",
+    "sql server",
+    "postgres",
+    "C++",
+    "software engineer",
+    "software developer",
+    "rust",    
+    "C#",
+    "backend",
     "programmer"
 ]
 
