@@ -194,23 +194,12 @@ class JobData:
     
     def get_job_html(self, job_number):
         """
-        For a given job_number, retrieve the job_html.
-
+        This function has been depricated.
+        It returns None only
         Parameters:
         - job_number (str): The job number to look up.
 
         Returns:
-        - str or None: The job_html if found; otherwise, None.
+        - None: This function has been depricated.
         """
-
-        # Query to get the job_html for the given job_number
-        results = self.db_handler.fetch(SQLQueries.JOB_HTML_QUERY, (job_number,))
-        job_html_result = results[0] if results else None
-
-        # If no job is found with the given job_number, return None
-        if not job_html_result:
-            return None
-
-        job_html = job_html_result[0]
-
-        return job_html
+        return None
