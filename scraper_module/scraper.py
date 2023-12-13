@@ -41,33 +41,20 @@ class JobScraper:
             self.network_handler = None
         self.job_data = JobData()
 
-    def is_valid_link(self, search_term, url, job_html=None):
+    def is_valid_link(self, search_term, url):
         """
         Validates if the provided URL's content contains the search term.
         The link is then categorized as valid or invalid. The validity status 
-        (boolean) is returned along with the job_html if the link is valid.
+        (boolean) is returned.
         """
 
-        # If job_html is not provided, fetch the soup
-        if job_html is None:
-            soup = self.network_handler.get_soup(url)
-            if soup:
-                job_html = str(soup)
 
-        # Check for validity using job_html
-        if job_html:
-            soup_str = job_html.lower()
-            search_terms = search_term.lower().split()
-            valid = all(term in soup_str for term in search_terms)
-        else:
-            valid = False
+        soup = self.network_handler.get_soup(url)
+        search_terms = search_term.lower().split()
+        soup_str = str(soup).lower()
+        valid = all(term in soup_str for term in search_terms)
 
-        # If the link is valid, clean job_html
-        if valid:
-            # Clean the job_html to remove problematic characters
-            job_html = job_html.encode('utf-8', 'ignore').decode('utf-8')
-
-        return valid, job_html if valid else None
+        return valid
 
 
 
@@ -85,12 +72,10 @@ class JobScraper:
             print("x", end="", flush=True)
             return
         # this search_term is not in the database for this job_number
-        # get job_html if it exists
-        job_html = self.job_data.get_job_html(job_number)
-        valid, job_html = self.is_valid_link(search_term, url, job_html)
+        valid  = self.is_valid_link(search_term, url)
 
         if valid:
-            self.job_data.add_new_link(search_term, url, job_number, LinkStatus.VALID, job_html)
+            self.job_data.add_new_link(search_term, url, job_number, LinkStatus.VALID)
             print("V", end="", flush=True)
         else:
             self.job_data.add_new_link(search_term, url, job_number, LinkStatus.INVALID)
