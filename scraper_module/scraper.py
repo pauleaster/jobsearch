@@ -7,6 +7,7 @@ It identifies job links based on search criteria, validates these links, and cat
 them as either valid or invalid. The results are saved to respective CSV files.
 """
 import traceback
+import csv
 
 from .handlers import NetworkHandler
 from .models import JobData, LinkStatus
@@ -41,33 +42,20 @@ class JobScraper:
             self.network_handler = None
         self.job_data = JobData()
 
-    def is_valid_link(self, search_term, url, job_html=None):
+    def is_valid_link(self, search_term, url):
         """
         Validates if the provided URL's content contains the search term.
         The link is then categorized as valid or invalid. The validity status 
-        (boolean) is returned along with the job_html if the link is valid.
+        (boolean) is returned.
         """
 
-        # If job_html is not provided, fetch the soup
-        if job_html is None:
-            soup = self.network_handler.get_soup(url)
-            if soup:
-                job_html = str(soup)
 
-        # Check for validity using job_html
-        if job_html:
-            soup_str = job_html.lower()
-            search_terms = search_term.lower().split()
-            valid = all(term in soup_str for term in search_terms)
-        else:
-            valid = False
+        soup = self.network_handler.get_soup(url)
+        search_terms = search_term.lower().split()
+        soup_str = str(soup).lower()
+        valid = all(term in soup_str for term in search_terms)
 
-        # If the link is valid, clean job_html
-        if valid:
-            # Clean the job_html to remove problematic characters
-            job_html = job_html.encode('utf-8', 'ignore').decode('utf-8')
-
-        return valid, job_html if valid else None
+        return valid
 
 
 
@@ -85,12 +73,10 @@ class JobScraper:
             print("x", end="", flush=True)
             return
         # this search_term is not in the database for this job_number
-        # get job_html if it exists
-        job_html = self.job_data.get_job_html(job_number)
-        valid, job_html = self.is_valid_link(search_term, url, job_html)
+        valid  = self.is_valid_link(search_term, url)
 
         if valid:
-            self.job_data.add_new_link(search_term, url, job_number, LinkStatus.VALID, job_html)
+            self.job_data.add_new_link(search_term, url, job_number, LinkStatus.VALID)
             print("V", end="", flush=True)
         else:
             self.job_data.add_new_link(search_term, url, job_number, LinkStatus.INVALID)
@@ -119,26 +105,57 @@ class JobScraper:
         Exceptions (including manual interrupts) are gracefully handled,
         and relevant messages are displayed.
         """
+        # Load saved state (if any)
+        saved_state = self.load_state()
+        start_from_term = False  # Set initial value to False
+        start_from_page = 1
+
+        if saved_state is not None:
+            start_from_term = saved_state['search_term']
+            start_from_page = saved_state['page_number']
+
+
         try:
             for search_term in search_terms:
-                print(f"Processing search {search_term}")
+                if start_from_term and search_term != start_from_term:
+                    continue  # Skip terms until you reach the saved state
+
+                print(f"\nProcessing search {search_term}")
                 # enter search term and submit
                 self.network_handler.initiate_search(search_term)
                 page_number = 1
-                print(f"page {page_number}")
-
                 has_next_page = True
-                while has_next_page:
-                    self.process_page(search_term)
-
+                while (page_number < start_from_page) and has_next_page:
                     has_next_page = self.network_handler.click_next_button()
-                    # Try to find the "Next" button and click it
-                    if has_next_page:
-                        page_number += 1
-                        print(f"\npage {page_number}")
+                    page_number += 1
+
+                if has_next_page:
+                    print(f"page {page_number}")
+                    while has_next_page:
+                        if page_number >= start_from_page:
+                            self.process_page(search_term)
+
+                            # Save state
+                            self.save_state(search_term, page_number + 1)
+
+
+                        has_next_page = self.network_handler.click_next_button()
+                        # Try to find the "Next" button and click it
+                        if has_next_page:
+                            page_number += 1
+                            print(f"\npage {page_number}")
+
+                # Reset start_from_page after completing the term where it left off
+                start_from_page = 1
+                # After processing the saved search term, reset start_from_term
+                if start_from_term == search_term:
+                    start_from_term = False
+
 
         except KeyboardInterrupt:
             print("Scraping interrupted by user.")
+            # Save state before exiting
+            self.save_state(search_term, page_number)
         except Exception as exception: # pylint: disable=broad-except
             # unhandled exception
             print(f"Unhandled exception occurred: {exception}")
@@ -152,6 +169,8 @@ class JobScraper:
             except Exception as exception: # pylint: disable=broad-except
                 print(f"Exception while trying to close the browser: {exception}")
                 traceback.print_exc()
+                # Save state before exiting
+                self.save_state(search_term, page_number)
             
             # attempt to close the database connection
             try:
@@ -160,3 +179,25 @@ class JobScraper:
             except Exception as exception: # pylint: disable=broad-except
                 print(f"Exception while trying to close the database connection: {exception}")
                 traceback.print_exc()
+
+    def save_state(self, search_term, page_number):
+        """
+        Saves the current state of the scraper to a CSV file.
+        """
+        with open('scraper_state.csv', 'w', newline='', encoding='utf-8') as file:
+            writer = csv.writer(file)
+            writer.writerow([search_term, page_number])
+
+    def load_state(self):
+        """
+        Loads the last saved state of the scraper from a CSV file.
+        Returns None if the file is not found or has invalid data.
+        """
+        try:
+            with open('scraper_state.csv', 'r', encoding='utf-8') as file:
+                reader = csv.reader(file)
+                for row in reader:
+                    return {'search_term': row[0], 'page_number': int(row[1])}
+            return None  # Empty file
+        except Exception:
+            return None  # return if no valid data is found in the csv file

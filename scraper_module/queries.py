@@ -16,8 +16,7 @@ class SQLQueries:
                 highlight TEXT NULL,
                 applied TEXT NULL,
                 contact TEXT NULL,
-                application_comments TEXT NULL,
-                job_html NVARCHAR(MAX) NULL
+                application_comments TEXT NULL
             );
             END
             """
@@ -59,21 +58,6 @@ class SQLQueries:
             SELECT valid FROM jobs WHERE job_number = ?;
             """
 
-    UPSERT_JOB_DETAILS_WITH_CONDITIONAL_HTML_UPDATE_QUERY = """
-            IF EXISTS (SELECT 1 FROM jobs WHERE job_number = ?)
-            BEGIN
-                -- Update job_html only if it's NULL in the existing record
-                UPDATE jobs 
-                SET job_html = COALESCE(job_html, ?)
-                WHERE job_number = ?
-            END
-            ELSE
-            BEGIN
-                INSERT INTO jobs (job_number, job_url, job_html) 
-                VALUES (?, ?, ?);
-            END
-            """
-
     INSERT_JOB_IF_NOT_EXISTS_QUERY = """
             IF NOT EXISTS (SELECT 1 FROM jobs WHERE job_number = ?)
             BEGIN
@@ -111,5 +95,3 @@ class SQLQueries:
                 JOIN search_terms st ON jst.term_id = st.term_id
                 WHERE jst.job_id = ?
             """
-
-    JOB_HTML_QUERY = "SELECT job_html FROM jobs WHERE job_number = ?"
