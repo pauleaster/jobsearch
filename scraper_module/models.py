@@ -122,17 +122,14 @@ class JobData:
         return {LinkStatus.VALID: is_valid, LinkStatus.INVALID: not is_valid}
 
 
-    def add_new_link(self, search_term, url, job_number, status: LinkStatus, job_html=None):
+    def add_new_link(self, search_term, url, job_number, status: LinkStatus):
         """
         Adds a new job link to the database, categorized by the provided status.
         """
         is_valid = (status == LinkStatus.VALID)
 
-        # Insert/Update the job details
-        if is_valid and job_html:
-            self.db_handler.execute(SQLQueries.UPSERT_JOB_DETAILS_WITH_CONDITIONAL_HTML_UPDATE_QUERY, (job_number, job_html, job_number, job_number, url, job_html))
-        else:
-            self.db_handler.execute(SQLQueries.INSERT_JOB_IF_NOT_EXISTS_QUERY, (job_number, job_number, url))
+
+        self.db_handler.execute(SQLQueries.INSERT_JOB_IF_NOT_EXISTS_QUERY, (job_number, job_number, url))
 
 
         # Insert the search term if it doesn't exist
@@ -191,15 +188,4 @@ class JobData:
         validities = {row[0]: row[1] for row in results}
 
         return validities
-    
-    def get_job_html(self, job_number):
-        """
-        This function has been depricated.
-        It returns None only
-        Parameters:
-        - job_number (str): The job number to look up.
-
-        Returns:
-        - None: This function has been depricated.
-        """
-        return None
+   
