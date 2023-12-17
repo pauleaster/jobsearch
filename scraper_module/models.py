@@ -128,11 +128,8 @@ class JobData:
         """
         is_valid = (status == LinkStatus.VALID)
 
-        # Insert/Update the job details
-        if is_valid:
-            self.db_handler.execute(SQLQueries.UPSERT_JOB_DETAILS_WITH_CONDITIONAL_HTML_UPDATE_QUERY, (job_number, job_number, job_number, url))
-        else:
-            self.db_handler.execute(SQLQueries.INSERT_JOB_IF_NOT_EXISTS_QUERY, (job_number, job_number, url))
+
+        self.db_handler.execute(SQLQueries.INSERT_JOB_IF_NOT_EXISTS_QUERY, (job_number, job_number, url))
 
 
         # Insert the search term if it doesn't exist
