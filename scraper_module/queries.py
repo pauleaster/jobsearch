@@ -58,18 +58,6 @@ class SQLQueries:
             SELECT valid FROM jobs WHERE job_number = ?;
             """
 
-    UPSERT_JOB_DETAILS_WITH_CONDITIONAL_HTML_UPDATE_QUERY = """
-            IF EXISTS (SELECT 1 FROM jobs WHERE job_number = ?)
-            BEGIN
-                -- job_html has been removed from the query
-            END
-            ELSE
-            BEGIN
-                INSERT INTO jobs (job_number, job_url) 
-                VALUES (?, ?);
-            END
-            """
-
     INSERT_JOB_IF_NOT_EXISTS_QUERY = """
             IF NOT EXISTS (SELECT 1 FROM jobs WHERE job_number = ?)
             BEGIN
