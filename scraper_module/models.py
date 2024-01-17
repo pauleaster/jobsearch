@@ -122,14 +122,14 @@ class JobData:
         return {LinkStatus.VALID: is_valid, LinkStatus.INVALID: not is_valid}
 
 
-    def add_new_link(self, search_term, url, job_number, status: LinkStatus):
+    def add_new_link(self, search_term, url, job_number, job_age, status: LinkStatus):
         """
         Adds a new job link to the database, categorized by the provided status.
         """
         is_valid = (status == LinkStatus.VALID)
 
 
-        self.db_handler.execute(SQLQueries.INSERT_JOB_IF_NOT_EXISTS_QUERY, (job_number, job_number, url))
+        self.db_handler.execute(SQLQueries.INSERT_JOB_IF_NOT_EXISTS_QUERY, (job_number, job_number, url, job_age))
 
 
         # Insert the search term if it doesn't exist
