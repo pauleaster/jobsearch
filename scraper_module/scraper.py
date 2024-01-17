@@ -8,6 +8,7 @@ them as either valid or invalid. The results are saved to respective CSV files.
 """
 import traceback
 import csv
+import re
 
 from .handlers import NetworkHandler
 from .models import JobData, LinkStatus
@@ -46,16 +47,31 @@ class JobScraper:
         """
         Validates if the provided URL's content contains the search term.
         The link is then categorized as valid or invalid. The validity status 
-        (boolean) is returned.
+        (boolean) is returned. Additionally, extracts 'job_age' from the webpage.
         """
-
-
         soup = self.network_handler.get_soup(url)
         search_terms = search_term.lower().split()
         soup_str = str(soup).lower()
         valid = all(term in soup_str for term in search_terms)
 
-        return valid
+        # Extract 'job_age'
+        job_age = self.extract_job_age(soup)
+
+        return valid, job_age
+
+    def extract_job_age(self, soup):
+        """
+        Extracts the 'job_age' from the soup object.
+        """
+        # Look for all span tags, and then filter out the one with 'Posted xd ago'
+        spans = soup.find_all('span')
+        for span in spans:
+            if 'posted' in span.text.lower() and 'd ago' in span.text.lower():
+                # Extract the number before 'd'
+                match = re.search(r'(\d+)d', span.text)
+                if match:
+                    return int(match.group(1))
+        return None
 
 
 
@@ -73,13 +89,13 @@ class JobScraper:
             print("x", end="", flush=True)
             return
         # this search_term is not in the database for this job_number
-        valid  = self.is_valid_link(search_term, url)
+        valid, job_age  = self.is_valid_link(search_term, url)
 
         if valid:
-            self.job_data.add_new_link(search_term, url, job_number, LinkStatus.VALID)
+            self.job_data.add_new_link(search_term, url, job_number, job_age, LinkStatus.VALID)
             print("V", end="", flush=True)
         else:
-            self.job_data.add_new_link(search_term, url, job_number, LinkStatus.INVALID)
+            self.job_data.add_new_link(search_term, url, job_number, job_age, LinkStatus.INVALID)
             print("I", end="", flush=True)
 
     def process_page(self, search_term):
