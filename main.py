@@ -6,6 +6,7 @@ SEARCH_TERMS = [
     "python",
     "pandas",
     "numpy",
+    "scipy",
     "matplotlib",
     "scikit-learn",
     "tensorflow",

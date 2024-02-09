@@ -8,6 +8,7 @@ them as either valid or invalid. The results are saved to respective CSV files.
 """
 import traceback
 import csv
+import re
 
 from .handlers import NetworkHandler
 from .models import JobData, LinkStatus
@@ -51,9 +52,12 @@ class JobScraper:
 
 
         soup = self.network_handler.get_soup(url)
-        search_terms = search_term.lower().split()
-        soup_str = str(soup).lower()
-        valid = all(term in soup_str for term in search_terms)
+        # Extract visible text from the soup object
+        visible_text = soup.get_text(separator=' ', strip=True).lower()
+
+        # Prepare regex pattern for exact phrase match with word boundaries
+        pattern = rf'\b{re.escape(search_term.lower())}\b'
+        valid = bool(re.search(pattern, visible_text))
 
         return valid
 
@@ -150,6 +154,8 @@ class JobScraper:
                 # After processing the saved search term, reset start_from_term
                 if start_from_term == search_term:
                     start_from_term = False
+            # Clear state here, as all searches completed successfully
+            self.clear_state()
 
 
         except KeyboardInterrupt:
@@ -201,3 +207,11 @@ class JobScraper:
             return None  # Empty file
         except Exception:
             return None  # return if no valid data is found in the csv file
+        
+    def clear_state(self):
+        """
+        Clears the saved state of the scraper by emptying the CSV file.
+        """
+        with open('scraper_state.csv', 'w', newline='', encoding='utf-8') as file:
+            pass
+        
