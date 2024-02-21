@@ -25,6 +25,7 @@ Note: Ensure lockfiles are managed properly, especially in multi-threaded scenar
 
 import os
 from enum import Enum, auto
+from datetime import datetime, timedelta
 from .db_handler import DBHandler
 from .config import DB_NAME, DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, AUTH_METHOD
 from .queries import SQLQueries
@@ -122,14 +123,17 @@ class JobData:
         return {LinkStatus.VALID: is_valid, LinkStatus.INVALID: not is_valid}
 
 
-    def add_new_link(self, search_term, url, job_number, status: LinkStatus):
+    def add_or_update_link(self, search_term, url, job_number, job_date, status: LinkStatus):
         """
         Adds a new job link to the database, categorized by the provided status.
         """
         is_valid = (status == LinkStatus.VALID)
 
-
+        # Insert the job if it doesn't exist
         self.db_handler.execute(SQLQueries.INSERT_JOB_IF_NOT_EXISTS_QUERY, (job_number, job_number, url))
+
+        # Update the job_date
+        self.db_handler.execute(SQLQueries.UPDATE_JOB_DATE, (job_date, job_number))
 
 
         # Insert the search term if it doesn't exist
@@ -150,12 +154,12 @@ class JobData:
 
 
 
-    def save_link(self, search_term, url, link_status):
-        """
-        Saves the provided link to the database, categorized by the provided status.
-        """
-        job_number = self.extract_job_number_from_url(url)
-        self.add_new_link(search_term, url, job_number, link_status)
+    # def save_link(self, search_term, url, link_status):
+    #     """
+    #     Saves the provided link to the database, categorized by the provided status.
+    #     """
+    #     job_number = self.extract_job_number_from_url(url)
+    #     self.add_new_link(search_term, url, job_number, link_status)
 
 
     def get_search_terms_and_validities(self, job_number):
@@ -189,3 +193,15 @@ class JobData:
 
         return validities
    
+    def calculate_job_date(self, job_age):
+        """
+        Calculates the age of the job by
+        current date - job_age and
+        convert to a date only ISO string
+        """
+        if job_age is None:
+            return None
+        # calculate the current date
+        current_date = datetime.now().date()
+        listing_date = current_date - timedelta(days=job_age)
+        return listing_date.isoformat()
