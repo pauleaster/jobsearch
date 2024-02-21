@@ -47,10 +47,8 @@ class JobScraper:
         """
         Validates if the provided URL's content contains the search term.
         The link is then categorized as valid or invalid. The validity status 
-        (boolean) is returned.
+        (boolean) is returned. Additionally, extracts 'job_age' from the webpage.
         """
-
-
         soup = self.network_handler.get_soup(url)
         # Extract visible text from the soup object
         visible_text = soup.get_text(separator=' ', strip=True).lower()
@@ -59,7 +57,34 @@ class JobScraper:
         pattern = rf'\b{re.escape(search_term.lower())}\b'
         valid = bool(re.search(pattern, visible_text))
 
-        return valid
+        if valid:
+            # Extract 'job_age'
+            job_age = self.extract_job_age(soup)
+            return valid, job_age
+        # If the search term is not found, return None for job_age
+        # don't need to launch extract_job_age() for invalid jobs
+        return valid, None
+
+    def extract_job_age(self, soup):
+        """
+        Extracts the 'job_age' from the soup object.
+        """
+        # Look for all span tags, and then filter out the one with 'Posted xd ago'
+        spans = soup.find_all('span')
+        for span in spans:
+            span_lower = span.text.lower()
+            if 'posted' in span_lower:
+                if 'd ago' in span_lower:
+                    # Extract the number before 'd'
+                    match = re.search(r'(\d+)d', span.text)
+                    if match:
+                        return int(match.group(1))
+                elif 'h ago' in span.text.lower():
+                    # Extract the number before 'h'
+                    match = re.search(r'(\d+)h', span.text)
+                    if match:
+                        return 0  # 0 days ago
+        return None
 
 
 
@@ -77,13 +102,20 @@ class JobScraper:
             print("x", end="", flush=True)
             return
         # this search_term is not in the database for this job_number
-        valid  = self.is_valid_link(search_term, url)
+        valid, job_age  = self.is_valid_link(search_term, url)
+
+        if job_age is not None:
+            # calculate the job creation date
+            # use current date - job_age
+            job_date = self.job_data.calculate_job_date(job_age)
+        else:
+            job_date = None
 
         if valid:
-            self.job_data.add_new_link(search_term, url, job_number, LinkStatus.VALID)
+            self.job_data.add_or_update_link(search_term, url, job_number, job_date, LinkStatus.VALID)
             print("V", end="", flush=True)
         else:
-            self.job_data.add_new_link(search_term, url, job_number, LinkStatus.INVALID)
+            self.job_data.add_or_update_link(search_term, url, job_number, job_date, LinkStatus.INVALID)
             print("I", end="", flush=True)
 
     def process_page(self, search_term):
@@ -177,7 +209,7 @@ class JobScraper:
                 traceback.print_exc()
                 # Save state before exiting
                 self.save_state(search_term, page_number)
-            
+        
             # attempt to close the database connection
             try:
                 print("Closing database connection...")
