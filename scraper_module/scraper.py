@@ -187,7 +187,7 @@ class JobScraper:
                 traceback.print_exc()
                 # Save state before exiting
                 self.save_state(search_term, page_number)
-            
+        
             # attempt to close the database connection
             try:
                 print("Closing database connection...")
