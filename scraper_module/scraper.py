@@ -6,6 +6,7 @@ This module provides the JobScraper class, a utility for navigating job websites
 It identifies job links based on search criteria, validates these links, and categorizes
 them as either valid or invalid. The results are saved to respective CSV files.
 """
+
 import traceback
 import csv
 import re
@@ -14,7 +15,9 @@ from .handlers import NetworkHandler
 from .models import JobData, LinkStatus
 from .config import JOB_SCRAPER_DEFAULT_URL, JOB_SCRAPER_REMOTE_URL
 
-USE_REMOTE = False  # Set this constant to either True or False based on your requirements
+USE_REMOTE = (
+    False  # Set this constant to either True or False based on your requirements
+)
 
 if USE_REMOTE:
     JOB_SCRAPER_URL = JOB_SCRAPER_REMOTE_URL
@@ -46,15 +49,15 @@ class JobScraper:
     def is_valid_link(self, search_term, url):
         """
         Validates if the provided URL's content contains the search term.
-        The link is then categorized as valid or invalid. The validity status 
+        The link is then categorized as valid or invalid. The validity status
         (boolean) is returned. Additionally, extracts 'job_age' from the webpage.
         """
         soup = self.network_handler.get_soup(url)
         # Extract visible text from the soup object
-        visible_text = soup.get_text(separator=' ', strip=True).lower()
+        visible_text = soup.get_text(separator=" ", strip=True).lower()
 
         # Prepare regex pattern for exact phrase match with word boundaries
-        pattern = rf'\b{re.escape(search_term.lower())}\b'
+        pattern = rf"\b{re.escape(search_term.lower())}\b"
         valid = bool(re.search(pattern, visible_text))
 
         if valid:
@@ -70,23 +73,21 @@ class JobScraper:
         Extracts the 'job_age' from the soup object.
         """
         # Look for all span tags, and then filter out the one with 'Posted xd ago'
-        spans = soup.find_all('span')
+        spans = soup.find_all("span")
         for span in spans:
             span_lower = span.text.lower()
-            if 'posted' in span_lower:
-                if 'd ago' in span_lower:
+            if "posted" in span_lower:
+                if "d ago" in span_lower:
                     # Extract the number before 'd'
-                    match = re.search(r'(\d+)d', span.text)
+                    match = re.search(r"(\d+)d", span.text)
                     if match:
                         return int(match.group(1))
-                elif 'h ago' in span.text.lower():
+                elif "h ago" in span.text.lower():
                     # Extract the number before 'h'
-                    match = re.search(r'(\d+)h', span.text)
+                    match = re.search(r"(\d+)h", span.text)
                     if match:
                         return 0  # 0 days ago
         return None
-
-
 
     def process_link(self, link, search_term):
         """Process an individual link to determine its validity and action."""
@@ -94,7 +95,9 @@ class JobScraper:
         job_number = self.job_data.extract_job_number_from_url(url)
         # link_status = self.job_data.job_in_links(job_number)
         #  for a given job_number, get the search terms and validities as a dict(search_term: validity)
-        search_term_validities = self.job_data.get_search_terms_and_validities(job_number)
+        search_term_validities = self.job_data.get_search_terms_and_validities(
+            job_number
+        )
         if search_term in search_term_validities:
             if search_term_validities[search_term]:
                 print("X", end="", flush=True)
@@ -102,7 +105,7 @@ class JobScraper:
             print("x", end="", flush=True)
             return
         # this search_term is not in the database for this job_number
-        valid, job_age  = self.is_valid_link(search_term, url)
+        valid, job_age = self.is_valid_link(search_term, url)
 
         if job_age is not None:
             # calculate the job creation date
@@ -112,10 +115,14 @@ class JobScraper:
             job_date = None
 
         if valid:
-            self.job_data.add_or_update_link(search_term, url, job_number, job_date, LinkStatus.VALID)
+            self.job_data.add_or_update_link(
+                search_term, url, job_number, job_date, LinkStatus.VALID
+            )
             print("V", end="", flush=True)
         else:
-            self.job_data.add_or_update_link(search_term, url, job_number, job_date, LinkStatus.INVALID)
+            self.job_data.add_or_update_link(
+                search_term, url, job_number, job_date, LinkStatus.INVALID
+            )
             print("I", end="", flush=True)
 
     def process_page(self, search_term):
@@ -147,9 +154,8 @@ class JobScraper:
         start_from_page = 1
 
         if saved_state is not None:
-            start_from_term = saved_state['search_term']
-            start_from_page = saved_state['page_number']
-
+            start_from_term = saved_state["search_term"]
+            start_from_page = saved_state["page_number"]
 
         try:
             for search_term in search_terms:
@@ -174,7 +180,6 @@ class JobScraper:
                             # Save state
                             self.save_state(search_term, page_number + 1)
 
-
                         has_next_page = self.network_handler.click_next_button()
                         # Try to find the "Next" button and click it
                         if has_next_page:
@@ -189,12 +194,11 @@ class JobScraper:
             # Clear state here, as all searches completed successfully
             self.clear_state()
 
-
         except KeyboardInterrupt:
             print("Scraping interrupted by user.")
             # Save state before exiting
             self.save_state(search_term, page_number)
-        except Exception as exception: # pylint: disable=broad-except
+        except Exception as exception:  # pylint: disable=broad-except
             # unhandled exception
             print(f"Unhandled exception occurred: {exception}")
             print("Printing stack trace...")
@@ -204,25 +208,27 @@ class JobScraper:
             try:
                 print("Closing browser...")
                 self.network_handler.close()
-            except Exception as exception: # pylint: disable=broad-except
+            except Exception as exception:  # pylint: disable=broad-except
                 print(f"Exception while trying to close the browser: {exception}")
                 traceback.print_exc()
                 # Save state before exiting
                 self.save_state(search_term, page_number)
-        
+
             # attempt to close the database connection
             try:
                 print("Closing database connection...")
                 self.job_data.db_handler.close()
-            except Exception as exception: # pylint: disable=broad-except
-                print(f"Exception while trying to close the database connection: {exception}")
+            except Exception as exception:  # pylint: disable=broad-except
+                print(
+                    f"Exception while trying to close the database connection: {exception}"
+                )
                 traceback.print_exc()
 
     def save_state(self, search_term, page_number):
         """
         Saves the current state of the scraper to a CSV file.
         """
-        with open('scraper_state.csv', 'w', newline='', encoding='utf-8') as file:
+        with open("scraper_state.csv", "w", newline="", encoding="utf-8") as file:
             writer = csv.writer(file)
             writer.writerow([search_term, page_number])
 
@@ -232,18 +238,17 @@ class JobScraper:
         Returns None if the file is not found or has invalid data.
         """
         try:
-            with open('scraper_state.csv', 'r', encoding='utf-8') as file:
+            with open("scraper_state.csv", "r", encoding="utf-8") as file:
                 reader = csv.reader(file)
                 for row in reader:
-                    return {'search_term': row[0], 'page_number': int(row[1])}
+                    return {"search_term": row[0], "page_number": int(row[1])}
             return None  # Empty file
         except Exception:
             return None  # return if no valid data is found in the csv file
-        
+
     def clear_state(self):
         """
         Clears the saved state of the scraper by emptying the CSV file.
         """
-        with open('scraper_state.csv', 'w', newline='', encoding='utf-8') as file:
+        with open("scraper_state.csv", "w", newline="", encoding="utf-8") as file:
             pass
-        
