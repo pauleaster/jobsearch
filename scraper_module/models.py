@@ -204,5 +204,5 @@ class JobData:
         # calculate the current date
         current_date = datetime.now().date()
         listing_date = current_date - timedelta(days=job_age)
-        return listing_date.date().isoformat()
+        return listing_date.isoformat()
     
