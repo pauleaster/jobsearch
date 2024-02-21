@@ -65,6 +65,11 @@ class SQLQueries:
                 VALUES (?, ?);
             END
             """
+    UPDATE_JOB_DATE = """
+            UPDATE jobs
+            SET job_date = ?
+            WHERE job_number = ?;
+            """
 
     SEARCH_TERM_INSERT_QUERY = """
             IF NOT EXISTS (SELECT 1 FROM search_terms WHERE term_text = ?)

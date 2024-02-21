@@ -57,10 +57,13 @@ class JobScraper:
         pattern = rf'\b{re.escape(search_term.lower())}\b'
         valid = bool(re.search(pattern, visible_text))
 
-        # Extract 'job_age'
-        job_age = self.extract_job_age(soup)
-
-        return valid, job_age
+        if valid:
+            # Extract 'job_age'
+            job_age = self.extract_job_age(soup)
+            return valid, job_age
+        # If the search term is not found, return None for job_age
+        # don't need to launch extract_job_age() for invalid jobs
+        return valid, None
 
     def extract_job_age(self, soup):
         """
@@ -69,11 +72,18 @@ class JobScraper:
         # Look for all span tags, and then filter out the one with 'Posted xd ago'
         spans = soup.find_all('span')
         for span in spans:
-            if 'posted' in span.text.lower() and 'd ago' in span.text.lower():
-                # Extract the number before 'd'
-                match = re.search(r'(\d+)d', span.text)
-                if match:
-                    return int(match.group(1))
+            span_lower = span.text.lower()
+            if 'posted' in span_lower:
+                if 'd ago' in span_lower:
+                    # Extract the number before 'd'
+                    match = re.search(r'(\d+)d', span.text)
+                    if match:
+                        return int(match.group(1))
+                elif 'h ago' in span.text.lower():
+                    # Extract the number before 'h'
+                    match = re.search(r'(\d+)h', span.text)
+                    if match:
+                        return 0  # 0 days ago
         return None
 
 
@@ -94,11 +104,18 @@ class JobScraper:
         # this search_term is not in the database for this job_number
         valid, job_age  = self.is_valid_link(search_term, url)
 
+        if job_age is not None:
+            # calculate the job creation date
+            # use current date - job_age
+            job_date = self.job_data.calculate_job_date(job_age)
+        else:
+            job_date = None
+
         if valid:
-            self.job_data.add_new_link(search_term, url, job_number, job_age, LinkStatus.VALID)
+            self.job_data.add_or_update_link(search_term, url, job_number, job_date, LinkStatus.VALID)
             print("V", end="", flush=True)
         else:
-            self.job_data.add_new_link(search_term, url, job_number, job_age, LinkStatus.INVALID)
+            self.job_data.add_or_update_link(search_term, url, job_number, job_date, LinkStatus.INVALID)
             print("I", end="", flush=True)
 
     def process_page(self, search_term):
