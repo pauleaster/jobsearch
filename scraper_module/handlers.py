@@ -21,6 +21,7 @@ from selenium import webdriver
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import (
     ElementClickInterceptedException,
@@ -46,10 +47,14 @@ class NetworkHandler:
         self.successive_url_read_delay = DelaySettings.SUCCESSIVE_URL_READ_DELAY.value
         self.last_request_time = 0
         self.time_since_last_request = 0
-        self.driver = webdriver.Chrome()
+        chrome_options = Options()
+        chrome_options.add_argument("--log-level=3")  # Suppress most logs
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-logging"])  # Suppress DevTools logs
+        self.driver = webdriver.Chrome(options=chrome_options)
         self.wait = WebDriverWait(self.driver, self.successive_url_read_delay)
         print(f"Opening {url}")
         self.driver.get(url)
+        self.initial_url = url
 
     def selenium_interaction_delay(self):
         """
@@ -84,8 +89,8 @@ class NetworkHandler:
         Extract the base URL and location segment from the current URL.
         Returns (base_url, location).
         """
-        current_url = self.driver.current_url.rstrip('/')
-        parts = current_url.split('/')
+        url = self.initial_url.rstrip('/')
+        parts = url.split('/')
         base_url = '/'.join(parts[:3])
         location = parts[-1]
         return base_url, location
@@ -179,3 +184,10 @@ class NetworkHandler:
         """
         text = soup.get_text(separator=" ", strip=True).lower()
         return "too many requests" in text or "429" in text
+
+    def has_results(self, soup):
+        """
+        Returns True if the page has job results, False if 'No matching search results' is found.
+        """
+        text = soup.get_text(separator=" ", strip=True).lower()
+        return "no matching search results" not in text
