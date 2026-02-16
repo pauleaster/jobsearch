@@ -72,36 +72,16 @@ class NetworkHandler:
         xpath_expression = '//a[contains(@href, "/job/")]'
         return self.find_elements(By.XPATH, xpath_expression)
 
-    @staticmethod
-    def format_search_term(search_term):
-        """
-        Format the search term for use in a job search URL.
-        """
-        return search_term.strip().replace(" ", "-")
-
-    def extract_base_and_location(self):
-        """
-        Extract the base URL and location segment from the current URL.
-        Returns (base_url, location).
-        """
-        current_url = self.driver.current_url.rstrip('/')
-        parts = current_url.split('/')
-        base_url = '/'.join(parts[:3])
-        location = parts[-1]
-        return base_url, location
-
     def initiate_search(self, search_term):
         """
-        Initiate a search by constructing the URL based on the search term and current location,
-        then navigating to it.
+        Initiate a search using the given search term.
         """
-        base_url, location = self.extract_base_and_location()
-        formatted_term = self.format_search_term(search_term)
-        search_url = f"{base_url}/{formatted_term}-jobs/{location}"
-
-        print(f"Navigating to search URL: {search_url}")
-        self.driver.get(search_url)
-        self.selenium_interaction_delay()
+        search_field = self.driver.find_element(By.ID, "keywords-input")
+        search_field.send_keys(Keys.CONTROL + "a")
+        search_field.send_keys(Keys.DELETE)
+        search_field.send_keys(search_term)
+        search_field.send_keys(Keys.RETURN)
+        self.selenium_interaction_delay()  # Add the delay after initiating the search
 
     def click_next_button(self):
         """
@@ -142,40 +122,39 @@ class NetworkHandler:
             )
         self.last_request_time = time.time()
 
-    def get_soup(self, url):
+    def get_request(self, url):
         """
-        Use Selenium to fetch the page and return a BeautifulSoup object.
-        Retries on 429-like rate limiting detected in the page content.
+        Perform an HTTP GET request for the given URL.
+        Retries on exception based on `DelaySettings`.
         """
+        last_exception = None
         for _ in range(DelaySettings.NUM_RETRIES.value):
             try:
-                self.driver.get(url)
-                self.selenium_interaction_delay()
-                html = self.driver.page_source
-                soup = BeautifulSoup(html, "html.parser")
-                if self.is_429_page(soup):
-                    delay = DelaySettings.REQUEST_EXCEPTION_DELAY.value
-                    print(f"429-like page detected, retrying after {delay} seconds...")
-                    time.sleep(delay)
-                    continue  # Retry the request
-                return soup
-            except Exception as exception:
+                request = requests.get(url, timeout=DelaySettings.REQUEST_TIMEOUT.value)
+                self.last_request_time = time.time()
+                return request
+            except requests.RequestException as exception:
+                last_exception = exception
                 print("E", end="")
                 time.sleep(DelaySettings.REQUEST_EXCEPTION_DELAY.value)
-                last_exception = exception
-        print(f"Exceeded maximum retries for URL: {url}")
-        return None
+        raise last_exception
+
+    def get_soup(self, url):
+        """
+        Return a BeautifulSoup object for the given URL.
+        Implements a delay if needed based on the last request time.
+        """
+        self.handle_successive_url_read_delay()
+        response = self.get_request(url)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, "html.parser")
+        else:
+            soup = None
+        self.last_request_time = time.time()  # Set time since last request
+        return soup
 
     def close(self):
         """
         Close the Selenium browser window.
         """
         self.driver.quit()
-
-    @staticmethod
-    def is_429_page(soup):
-        """
-        Detect if the loaded page is a 429 Too Many Requests error page.
-        """
-        text = soup.get_text(separator=" ", strip=True).lower()
-        return "too many requests" in text or "429" in text
