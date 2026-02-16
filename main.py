@@ -23,9 +23,14 @@ SEARCH_TERMS = [
     "software engineer",
     "software developer",
     "rust",    
-    "C#",
     "backend",
-    "programmer"
+    "programmer",
+    "llm",
+    "mysql",
+    "postgres",
+    "activemq",
+    "kafka",
+    "typescript",
 ]
 
 search_terms = [f'{s}' for s in SEARCH_TERMS]

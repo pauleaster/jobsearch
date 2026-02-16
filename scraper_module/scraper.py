@@ -53,6 +53,9 @@ class JobScraper:
         (boolean) is returned. Additionally, extracts 'job_age' from the webpage.
         """
         soup = self.network_handler.get_soup(url)
+        if soup is None:
+            print(f"Failed to retrieve content for URL: {url}")
+            return False, None  # Return False for validity and None for job_age if content retrieval fails
         # Extract visible text from the soup object
         visible_text = soup.get_text(separator=" ", strip=True).lower()
 
