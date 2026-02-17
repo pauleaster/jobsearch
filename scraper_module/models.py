@@ -26,9 +26,47 @@ Note: Ensure lockfiles are managed properly, especially in multi-threaded scenar
 import os
 from enum import Enum, auto
 from datetime import datetime, timedelta
-from .db_handler import DBHandler
-from .config import DB_NAME, DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, AUTH_METHOD
-from .queries import SQLQueries
+from sqlalchemy import (
+    Column, Integer, SmallInteger, String, Text, Boolean, Date, ForeignKey
+)
+from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy.engine.url import URL
+from .database import engine, SessionLocal
+
+Base = declarative_base()
+
+class Job(Base):
+    __tablename__ = 'jobs'
+    job_id = Column(Integer, primary_key=True, autoincrement=True)
+    job_number = Column(Integer, nullable=False)
+    job_url = Column(Text, nullable=False)
+    title = Column(Text, nullable=True)
+    comments = Column(Text, nullable=True)
+    requirements = Column(Text, nullable=True)
+    follow_up = Column(Text, nullable=True)
+    highlight = Column(Text, nullable=True)
+    applied = Column(Text, nullable=True)
+    contact = Column(Text, nullable=True)
+    application_comments = Column(Text, nullable=True)
+    job_date = Column(Date, nullable=True)
+
+    job_search_terms = relationship("JobSearchTerm", back_populates="job")
+
+class SearchTerm(Base):
+    __tablename__ = 'search_terms'
+    term_id = Column(SmallInteger, primary_key=True, autoincrement=True)
+    term_text = Column(String, nullable=False)
+
+    job_search_terms = relationship("JobSearchTerm", back_populates="search_term")
+
+class JobSearchTerm(Base):
+    __tablename__ = 'job_search_terms'
+    job_id = Column(Integer, ForeignKey('jobs.job_id'), primary_key=True)
+    term_id = Column(SmallInteger, ForeignKey('search_terms.term_id'), primary_key=True)
+    valid = Column(Boolean, nullable=False)
+
+    job = relationship("Job", back_populates="job_search_terms")
+    search_term = relationship("SearchTerm", back_populates="job_search_terms")
 
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -53,15 +91,11 @@ class JobData:
     def __init__(self):
         """
         Initializes an instance of JobData with storage structures for job links,
-        job counts, SQL Server database handlers, and initial counts.
-        Also, initializes the job data by reading existing CSV files.
+        job counts, SQLAlchemy engine/session, and initial counts.
         """
-        # Initialize DB connection
-        self.db_handler = DBHandler(dbname=DB_NAME, auth_method=AUTH_METHOD, user=DB_USER, password=DB_PASSWORD, host=DB_HOST, port=DB_PORT)
-        self.db_handler.connect()
-
-        # Ensure the required table exists
-        self.create_tables_if_not_exists()
+        # Ensure tables are created
+        Base.metadata.create_all(engine)
+        self.session = SessionLocal()
 
         # Store the initial counts
         self.initial_counts = {
@@ -81,24 +115,18 @@ class JobData:
 
 
 
-    def create_tables_if_not_exists(self):
-        """
-        Creates the required tables if they do not exist.
-        """
-        self.db_handler.execute(SQLQueries.CREATE_JOBS_TABLE_QUERY)
-        self.db_handler.execute(SQLQueries.CREATE_SEARCH_TERMS_TABLE_QUERY)
-        self.db_handler.execute(SQLQueries.CREATE_JOB_SEARCH_TERMS_TABLE_QUERY)
-
-
     def get_link_count(self, status: LinkStatus) -> int:
         """
         Return the current count of links for a provided status.
         """
         is_valid = (status == LinkStatus.VALID)
-        
-        result = self.db_handler.fetch(SQLQueries.GET_DISTINCT_JOBS_QUERY, (is_valid,))
-        
-        return result[0][0]
+        count = (
+            self.session.query(JobSearchTerm)
+            .filter(JobSearchTerm.valid == is_valid)
+            .distinct(JobSearchTerm.job_id)
+            .count()
+        )
+        return count
 
 
     def get_links_difference(self, status: LinkStatus) -> int:
@@ -113,15 +141,13 @@ class JobData:
         Checks if a job is present in the database and its validity status.
         Returns a dictionary indicating the presence of the job and its validity.
         """
-        
-        result = self.db_handler.fetch(SQLQueries.JOB_IN_LINKS_QUERY, (job_number,))
-        
-        if not result:
+        job = self.session.query(Job).filter_by(job_number=job_number).first()
+        if not job:
             return {LinkStatus.VALID: False, LinkStatus.INVALID: False}
-        
-        is_valid = result[0][0]
-        return {LinkStatus.VALID: is_valid, LinkStatus.INVALID: not is_valid}
-
+        # Check if there is at least one valid/invalid JobSearchTerm for this job
+        valid = self.session.query(JobSearchTerm).filter_by(job_id=job.job_id, valid=True).first() is not None
+        invalid = self.session.query(JobSearchTerm).filter_by(job_id=job.job_id, valid=False).first() is not None
+        return {LinkStatus.VALID: valid, LinkStatus.INVALID: invalid}
 
     def add_or_update_link(self, search_term, url, job_number, job_date, status: LinkStatus):
         """
@@ -129,68 +155,56 @@ class JobData:
         """
         is_valid = (status == LinkStatus.VALID)
 
-        # Insert the job if it doesn't exist
-        self.db_handler.execute(SQLQueries.INSERT_JOB_IF_NOT_EXISTS_QUERY, (job_number, job_number, url))
+        # Insert or get the job
+        job = self.session.query(Job).filter_by(job_number=job_number).first()
+        if not job:
+            job = Job(job_number=job_number, job_url=url, job_date=job_date)
+            self.session.add(job)
+            self.session.commit()
+        else:
+            # Optionally update the job_url and job_date if needed
+            job.job_url = url
+            job.job_date = job_date
+            self.session.commit()
 
-        # Update the job_date
-        self.db_handler.execute(SQLQueries.UPDATE_JOB_DATE, (job_date, job_number))
+        # Insert or get the search term
+        term = self.session.query(SearchTerm).filter_by(term_text=search_term).first()
+        if not term:
+            term = SearchTerm(term_text=search_term)
+            self.session.add(term)
+            self.session.commit()
 
-
-        # Insert the search term if it doesn't exist
-        
-        self.db_handler.execute(SQLQueries.SEARCH_TERM_INSERT_QUERY, (search_term, search_term))
-
-
-        # Fetch the job_id and term_id
-        
-        job_id = self.db_handler.fetch(SQLQueries.JOB_ID_QUERY, (job_number,))[0][0]
-        term_id = self.db_handler.fetch(SQLQueries.TERM_ID_QUERY, (search_term,))[0][0]
-
-        # Insert/Update the association between job and search term with validity
-        
-        self.db_handler.execute(SQLQueries.UPSERT_JOB_SEARCH_TERM_VALIDITY, (job_id, term_id, is_valid, is_valid))
-
-
-
-
-
-    # def save_link(self, search_term, url, link_status):
-    #     """
-    #     Saves the provided link to the database, categorized by the provided status.
-    #     """
-    #     job_number = self.extract_job_number_from_url(url)
-    #     self.add_new_link(search_term, url, job_number, link_status)
-
+        # Insert or update the association in JobSearchTerm
+        job_search_term = self.session.query(JobSearchTerm).filter_by(
+            job_id=job.job_id, term_id=term.term_id
+        ).first()
+        if not job_search_term:
+            job_search_term = JobSearchTerm(
+                job_id=job.job_id, term_id=term.term_id, valid=is_valid
+            )
+            self.session.add(job_search_term)
+        else:
+            job_search_term.valid = is_valid
+        self.session.commit()
 
     def get_search_terms_and_validities(self, job_number):
         """
         For a given job_number, retrieve the associated search terms and their validities.
 
-        Parameters:
-        - job_number (str): The job number to look up.
-
         Returns:
         - dict: A dictionary where keys are search terms and values are their corresponding validities (as booleans).
         """
-
-        # Query to get the job_id for the given job_number
-        
-        results = self.db_handler.fetch(SQLQueries.JOB_ID_QUERY, (job_number,))
-        job_id_result = results[0] if results else None
-
-        # If no job is found with the given job_number, return an empty dictionary
-        if not job_id_result:
+        job = self.session.query(Job).filter_by(job_number=job_number).first()
+        if not job:
             return {}
 
-        job_id = job_id_result[0]
-
-        # Query to get the search terms and their validities for the given job_id
-        
-        results = self.db_handler.fetch(SQLQueries.GET_SEARCH_TERM_VALIDITIES_FROM_JOB, (job_id,))
-
-        # Convert the results into a dictionary: search_term -> validity
-        validities = {row[0]: row[1] for row in results}
-
+        results = (
+            self.session.query(SearchTerm.term_text, JobSearchTerm.valid)
+            .join(JobSearchTerm, SearchTerm.term_id == JobSearchTerm.term_id)
+            .filter(JobSearchTerm.job_id == job.job_id)
+            .all()
+        )
+        validities = {term_text: valid for term_text, valid in results}
         return validities
    
     def calculate_job_date(self, job_age):
@@ -205,4 +219,6 @@ class JobData:
         current_date = datetime.now().date()
         listing_date = current_date - timedelta(days=job_age)
         return listing_date.isoformat()
-    
+
+    def close(self):
+        self.session.close()

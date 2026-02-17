@@ -21,6 +21,7 @@ from selenium import webdriver
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import (
     ElementClickInterceptedException,
@@ -29,6 +30,7 @@ from selenium.common.exceptions import (
 )
 import requests
 from bs4 import BeautifulSoup
+import psutil
 
 from .delays import DelaySettings
 
@@ -46,10 +48,22 @@ class NetworkHandler:
         self.successive_url_read_delay = DelaySettings.SUCCESSIVE_URL_READ_DELAY.value
         self.last_request_time = 0
         self.time_since_last_request = 0
-        self.driver = webdriver.Chrome()
+        chrome_options = Options()
+        chrome_options.add_argument("--log-level=3")  # Suppress most logs
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-logging"])  # Suppress DevTools logs
+        self.driver = webdriver.Chrome(options=chrome_options)
         self.wait = WebDriverWait(self.driver, self.successive_url_read_delay)
         print(f"Opening {url}")
         self.driver.get(url)
+        self.initial_url = url
+
+        # Store the driver PID immediately after creation
+        try:
+            self.driver_pid = self.driver.service.process.pid
+            print(f"Selenium driver PID: {self.driver_pid}")
+        except Exception:
+            self.driver_pid = None
+            print("Could not retrieve Selenium driver PID.")
 
     def selenium_interaction_delay(self):
         """
@@ -76,16 +90,18 @@ class NetworkHandler:
     def format_search_term(search_term):
         """
         Format the search term for use in a job search URL.
+        This method replaces spaces with hyphens and trims whitespace.
+        Also replaces ++ with %2B%2B for C++ search term.
         """
-        return search_term.strip().replace(" ", "-")
+        return search_term.strip().replace(" ", "-").replace("++", "%2B%2B")
 
     def extract_base_and_location(self):
         """
         Extract the base URL and location segment from the current URL.
         Returns (base_url, location).
         """
-        current_url = self.driver.current_url.rstrip('/')
-        parts = current_url.split('/')
+        url = self.initial_url.rstrip('/')
+        parts = url.split('/')
         base_url = '/'.join(parts[:3])
         location = parts[-1]
         return base_url, location
@@ -93,15 +109,29 @@ class NetworkHandler:
     def initiate_search(self, search_term):
         """
         Initiate a search by constructing the URL based on the search term and current location,
-        then navigating to it.
+        then navigating to it. For 'C++', simulate user input for accurate results.
         """
+        self.search_term = search_term
         base_url, location = self.extract_base_and_location()
-        formatted_term = self.format_search_term(search_term)
-        search_url = f"{base_url}/{formatted_term}-jobs/{location}"
+        self.formatted_term = self.format_search_term(search_term)
+        search_url = f"{base_url}/{self.formatted_term}-jobs/{location}"
 
-        print(f"Navigating to search URL: {search_url}")
-        self.driver.get(search_url)
-        self.selenium_interaction_delay()
+        if search_term.strip().lower() == "c++":
+            # Go to the base search page first
+            self.driver.get(f"{base_url}/jobs/{location}")
+            self.selenium_interaction_delay()
+            # Find the input by placeholder and enter "C++"
+            search_input = self.driver.find_element(By.XPATH, '//input[@placeholder="Enter keywords"]')
+            search_input.clear()
+            search_input.send_keys("C++")
+            # Find and click the search button
+            search_button = self.driver.find_element(By.ID, "searchButton")
+            search_button.click()
+            self.selenium_interaction_delay()
+        else:
+            print(f"Navigating to search URL: {search_url}")
+            self.driver.get(search_url)
+            self.selenium_interaction_delay()
 
     def click_next_button(self):
         """
@@ -142,40 +172,80 @@ class NetworkHandler:
             )
         self.last_request_time = time.time()
 
-    def get_soup(self, url):
+    def get_soup(self, url, max_retries=5, base_delay=30):
         """
         Use Selenium to fetch the page and return a BeautifulSoup object.
-        Retries on 429-like rate limiting detected in the page content.
+        Retries on 429-like rate limiting detected in the page content, with exponential backoff.
         """
-        for _ in range(DelaySettings.NUM_RETRIES.value):
+        retries = 0
+        delay = base_delay
+        last_exception = None
+        while retries < max_retries:
             try:
                 self.driver.get(url)
                 self.selenium_interaction_delay()
                 html = self.driver.page_source
                 soup = BeautifulSoup(html, "html.parser")
-                if self.is_429_page(soup):
-                    delay = DelaySettings.REQUEST_EXCEPTION_DELAY.value
+                if self.is_429_page(soup, url):
                     print(f"429-like page detected, retrying after {delay} seconds...")
                     time.sleep(delay)
-                    continue  # Retry the request
+                    delay *= 2  # Exponential backoff
+                    retries += 1
+                    continue
                 return soup
             except Exception as exception:
                 print("E", end="")
-                time.sleep(DelaySettings.REQUEST_EXCEPTION_DELAY.value)
+                time.sleep(delay)
+                delay *= 2  # Exponential backoff
+                retries += 1
                 last_exception = exception
         print(f"Exceeded maximum retries for URL: {url}")
+        if last_exception:
+            print(f"Last exception: {last_exception}")
         return None
 
     def close(self):
         """
-        Close the Selenium browser window.
+        Close the Selenium browser window and forcibly kill the process if needed.
         """
-        self.driver.quit()
+        try:
+            self.driver.quit()
+            time.sleep(2)
+            if self.driver_pid:
+                print(f"Selenium driver parent PID (chromedriver): {self.driver_pid}")
+                parent = psutil.Process(self.driver_pid)
+                for child in parent.children(recursive=True):
+                    print(f"Killing child process: {child.pid}")
+                    child.kill()
+                if parent.is_running():
+                    print(f"Killing driver process: {parent.pid}")
+                    parent.kill()
+        except Exception as e:
+            print(f"Exception during browser close: {e}")
 
-    @staticmethod
-    def is_429_page(soup):
+    def is_429_page(self, soup, url=None):
         """
         Detect if the loaded page is a 429 Too Many Requests error page.
+        Prints which trigger was found and the current URL, and context for '429'.
         """
         text = soup.get_text(separator=" ", strip=True).lower()
-        return "too many requests" in text or "429" in text
+        if "too many requests" in text:
+            print(f'"too many requests" found in page for URL: {url}')
+            return True
+        return False
+
+    def has_results(self, soup):
+        """
+        Returns True if the page has job results, False if 'No matching search results' is found.
+        """
+        if soup is None:
+            return False
+        text = soup.get_text(separator=" ", strip=True).lower()
+        return "no matching search results" not in text
+
+    def get_current_page_soup(self):
+        """
+        Return a BeautifulSoup object for the current Selenium page source.
+        """
+        html = self.driver.page_source
+        return BeautifulSoup(html, "html.parser")
