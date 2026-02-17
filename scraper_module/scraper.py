@@ -12,6 +12,7 @@ import csv
 import re
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
+from selenium.common.exceptions import StaleElementReferenceException
 
 from .handlers import NetworkHandler
 from .models import JobData, LinkStatus
@@ -71,10 +72,19 @@ class JobScraper:
             return False, None  # Return False for validity and None for job_age if content retrieval fails
         # Extract visible text from the soup object
         visible_text = soup.get_text(separator=" ", strip=True).lower()
+        formatted_term = self.network_handler.formatted_term.lower()
+        search_term_lower = search_term.lower()
 
-        # Prepare regex pattern for exact phrase match with word boundaries
-        pattern = rf"\b{re.escape(search_term.lower())}\b"
-        valid = bool(re.search(pattern, visible_text))
+        # Special handling for C++
+        if search_term_lower == "c++":
+            valid = "c++" in visible_text or "c%2b%2b" in visible_text
+        else:
+            # Prepare regex pattern for exact phrase match with word boundaries
+            pattern = rf"\b{re.escape(search_term_lower)}\b"
+            valid = bool(re.search(pattern, visible_text))
+            if formatted_term != search_term_lower:
+                formatted_term_pattern = rf"\b{re.escape(formatted_term)}\b"
+                valid = valid or bool(re.search(formatted_term_pattern, visible_text))
 
         if valid:
             # Extract 'job_age'
@@ -207,6 +217,23 @@ class JobScraper:
 
         print("V" if valid else "I", end="", flush=True)
 
+    def open_cpp_search_page(self, page_number):
+        """
+        Opens the C++ search results page and advances to the specified page_number.
+        Page 1 is loaded by entering 'C++' in the search box and submitting.
+        For page_number > 1, clicks the 'Next' button (page_number - 1) times.
+        Returns True if the target page is reached, False otherwise.
+        """
+        self.network_handler.initiate_search("C++")
+        current_page = 1
+        if page_number <= 1:
+            return True
+        while current_page < page_number:
+            if not self.network_handler.click_next_button():
+                return False
+            current_page += 1
+        return True
+
     def perform_searches(self, search_terms):
         """
         Drives the job scraping process:
@@ -216,19 +243,22 @@ class JobScraper:
         3. Validates each job link based on its content.
         4. Categorizes and saves each link as either valid or invalid.
         5. Repeats the process for every subsequent page of results until
-           no further pages exist.
+        no further pages exist.
 
         Exceptions (including manual interrupts) are gracefully handled,
         and relevant messages are displayed.
         """
         # Load saved state (if any)
         saved_state = self.load_state()
-        start_from_term = False  # Set initial value to False
+        start_from_term = False
         start_from_page = 1
 
         if saved_state is not None:
             start_from_term = saved_state["search_term"]
             start_from_page = saved_state["page_number"]
+
+        search_term = None
+        page_number = None
 
         try:
             for search_term in search_terms:
@@ -238,60 +268,75 @@ class JobScraper:
                 print(f"\nProcessing search {search_term}")
                 self.network_handler.initiate_search(search_term)
                 base_url, location = self.network_handler.extract_base_and_location()
-                formatted_term = self.network_handler.format_search_term(search_term)
-                search_base = f"{base_url}/{formatted_term}-jobs/{location}"
+                search_base = f"{base_url}/{self.network_handler.formatted_term}-jobs/{location}"
 
                 page_number = start_from_page
-                while True:
-                    page_url = (
-                        f"{search_base}?page={page_number}" if page_number > 1 else search_base
-                    )
-                    print(f"page {page_number}")
-                    self.network_handler.driver.get(page_url)
-                    self.network_handler.selenium_interaction_delay()
-                    self.process_page(search_term)
 
-                    # Check if there are results on this page
-                    soup = self.network_handler.get_soup(page_url)
-                    if not self.network_handler.has_results(soup):
-                        break
+                if search_term.strip().lower() == "c++":
+                    current_page = page_number
+                    while True:
+                        # Use open_cpp_search_page to get to the correct page
+                        if not self.open_cpp_search_page(current_page):
+                            print(f"Failed to reach page {current_page} for C++ search.")
+                            break
+                        print(f"page {current_page}")
+                        self.process_page(search_term)
+                        soup = self.network_handler.get_current_page_soup()
+                        if not self.network_handler.has_results(soup):
+                            break
+                        current_page += 1
+                else:
+                    while True:
+                        page_url = (
+                            f"{search_base}?page={page_number}" if page_number > 1 else search_base
+                        )
 
-                    page_number += 1
+                        if page_number > 1:
+                            print("\n")
+                        print(f"page {page_number}")
+                        self.network_handler.driver.get(page_url)
+                        self.network_handler.selenium_interaction_delay()
+                        self.process_page(search_term)
+
+                        soup = self.network_handler.get_soup(page_url)
+                        if not self.network_handler.has_results(soup):
+                            break
+
+                        page_number += 1
 
                 start_from_page = 1
                 if start_from_term == search_term:
                     start_from_term = False
+
             self.clear_state()
 
         except KeyboardInterrupt:
             print("Scraping interrupted by user.")
-            # Save state before exiting
-            self.save_state(search_term, page_number)
+            if search_term is not None and page_number is not None:
+                self.save_state(search_term, page_number)
+
         except Exception as exception:  # pylint: disable=broad-except
-            # unhandled exception
             print(f"Unhandled exception occurred: {exception}")
             print("Printing stack trace...")
             traceback.print_exc()
+
         finally:
-            # attempt to close the browser
+            try:
+                print("Closing database connection...")
+                self.job_data.close()
+            except Exception as exception:  # pylint: disable=broad-except
+                print(f"Exception while trying to close the database connection: {exception}")
+                traceback.print_exc()
+
             try:
                 print("Closing browser...")
                 self.network_handler.close()
             except Exception as exception:  # pylint: disable=broad-except
                 print(f"Exception while trying to close the browser: {exception}")
                 traceback.print_exc()
-                # Save state before exiting
-                self.save_state(search_term, page_number)
+                if search_term is not None and page_number is not None:
+                    self.save_state(search_term, page_number)
 
-            # attempt to close the database connection
-            try:
-                print("Closing database connection...")
-                self.job_data.close()
-            except Exception as exception:  # pylint: disable=broad-except
-                print(
-                    f"Exception while trying to close the database connection: {exception}"
-                )
-                traceback.print_exc()
 
     def save_state(self, search_term, page_number):
         """
