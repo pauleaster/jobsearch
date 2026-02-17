@@ -19,6 +19,7 @@ SEARCH_TERMS = [
     "javascript",
     "sql server",
     "postgres",
+    "langchain",
     "C++",
     "software engineer",
     "software developer",

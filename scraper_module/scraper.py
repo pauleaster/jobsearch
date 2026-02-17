@@ -10,6 +10,9 @@ them as either valid or invalid. The results are saved to respective CSV files.
 import traceback
 import csv
 import re
+from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
+from selenium.common.exceptions import StaleElementReferenceException
 
 from .handlers import NetworkHandler
 from .models import JobData, LinkStatus
@@ -40,6 +43,17 @@ class JobScraper:
         self.last_request_time = 0
         self.time_since_last_request = 0
         self.url = JOB_SCRAPER_URL
+
+        # Database connectivity check
+        try:
+            test_job_data = JobData()
+            test_job_data.session.execute(text("SELECT 1"))
+            print("Database connection successful.")
+        except OperationalError as e:
+            print("Database connection failed. Please check your settings and server.")
+            print(e)
+            raise SystemExit(1)
+
         if load_network_handler:
             self.network_handler = NetworkHandler(self.url)
         else:
@@ -58,10 +72,19 @@ class JobScraper:
             return False, None  # Return False for validity and None for job_age if content retrieval fails
         # Extract visible text from the soup object
         visible_text = soup.get_text(separator=" ", strip=True).lower()
+        formatted_term = self.network_handler.formatted_term.lower()
+        search_term_lower = search_term.lower()
 
-        # Prepare regex pattern for exact phrase match with word boundaries
-        pattern = rf"\b{re.escape(search_term.lower())}\b"
-        valid = bool(re.search(pattern, visible_text))
+        # Special handling for C++
+        if search_term_lower == "c++":
+            valid = "c++" in visible_text or "c%2b%2b" in visible_text
+        else:
+            # Prepare regex pattern for exact phrase match with word boundaries
+            pattern = rf"\b{re.escape(search_term_lower)}\b"
+            valid = bool(re.search(pattern, visible_text))
+            if formatted_term != search_term_lower:
+                formatted_term_pattern = rf"\b{re.escape(formatted_term)}\b"
+                valid = valid or bool(re.search(formatted_term_pattern, visible_text))
 
         if valid:
             # Extract 'job_age'
@@ -130,12 +153,86 @@ class JobScraper:
 
     def process_page(self, search_term):
         """
-        Processes the current page, extracting job links and evaluating
-        each link's validity based on the given search term.
+        Processes the current page by snapshotting job URLs (strings) up front,
+        then validating each URL. This avoids holding WebElements long enough to go stale.
+        Includes a bounded retry in case the page is mid re-render.
         """
-        job_links = self.network_handler.find_job_links()
-        for link in job_links:
-            self.process_link(link, search_term)
+        max_attempts = 3
+        hrefs: list[str] = []
+
+        for attempt in range(1, max_attempts + 1):
+            job_links = self.network_handler.find_job_links()
+
+            hrefs = []
+            stale_count = 0
+
+            for link in job_links:
+                try:
+                    href = link.get_attribute("href")
+                    if href:
+                        hrefs.append(href.split("?")[0])
+                except StaleElementReferenceException:
+                    stale_count += 1
+
+            # If we got something usable, accept it.
+            # If the page is stable (no stale elements), break immediately.
+            # If only a couple went stale, also accept to avoid thrashing.
+            if hrefs and (stale_count == 0 or stale_count < 3):
+                break
+
+            # If we got nothing (or lots of stale), loop and try again.
+            # Optionally add a tiny pause if you have one in NetworkHandler.
+            # self.network_handler.small_pause()
+
+        # De-dupe URLs while preserving order
+        seen = set()
+        hrefs = [u for u in hrefs if not (u in seen or seen.add(u))]
+
+        for url in hrefs:
+            self.process_link_url(url, search_term)
+
+    def process_link_url(self, url, search_term):
+        """Process an individual URL to determine its validity and action."""
+        job_number = self.job_data.extract_job_number_from_url(url)
+
+        # For a given job_number, get dict(search_term: validity)
+        search_term_validities = self.job_data.get_search_terms_and_validities(job_number)
+
+        # If we've already seen this job_number for this search_term, short-circuit
+        if search_term in search_term_validities:
+            print("X" if search_term_validities[search_term] else "x", end="", flush=True)
+            return
+
+        # This search_term is not in the database for this job_number yet
+        valid, job_age = self.is_valid_link(search_term, url)
+        job_date = self.job_data.calculate_job_date(job_age) if job_age is not None else None
+
+        self.job_data.add_or_update_link(
+            search_term,
+            url,
+            job_number,
+            job_date,
+            LinkStatus.VALID if valid else LinkStatus.INVALID,
+        )
+
+        print("V" if valid else "I", end="", flush=True)
+
+    def open_cpp_search_page(self, page_number):
+        """
+        Opens the C++ search results page and advances to the specified page_number.
+        Page 1 is loaded by entering 'C++' in the search box and submitting.
+        For page_number > 1, clicks the 'Next' button (page_number - 1) times.
+        Returns True if the target page is reached, False otherwise.
+        """
+        self.network_handler.initiate_search("C++")
+        current_page = 1
+        if page_number <= 1:
+            return True
+        while current_page < page_number:
+            if not self.network_handler.click_next_button():
+                return False
+            current_page += 1
+        return True
 
     def perform_searches(self, search_terms):
         """
@@ -146,19 +243,22 @@ class JobScraper:
         3. Validates each job link based on its content.
         4. Categorizes and saves each link as either valid or invalid.
         5. Repeats the process for every subsequent page of results until
-           no further pages exist.
+        no further pages exist.
 
         Exceptions (including manual interrupts) are gracefully handled,
         and relevant messages are displayed.
         """
         # Load saved state (if any)
         saved_state = self.load_state()
-        start_from_term = False  # Set initial value to False
+        start_from_term = False
         start_from_page = 1
 
         if saved_state is not None:
             start_from_term = saved_state["search_term"]
             start_from_page = saved_state["page_number"]
+
+        search_term = None
+        page_number = None
 
         try:
             for search_term in search_terms:
@@ -166,66 +266,77 @@ class JobScraper:
                     continue  # Skip terms until you reach the saved state
 
                 print(f"\nProcessing search {search_term}")
-                # enter search term and submit
                 self.network_handler.initiate_search(search_term)
-                page_number = 1
-                has_next_page = True
-                while (page_number < start_from_page) and has_next_page:
-                    has_next_page = self.network_handler.click_next_button()
-                    page_number += 1
+                base_url, location = self.network_handler.extract_base_and_location()
+                search_base = f"{base_url}/{self.network_handler.formatted_term}-jobs/{location}"
 
-                if has_next_page:
-                    print(f"page {page_number}")
-                    while has_next_page:
-                        if page_number >= start_from_page:
-                            self.process_page(search_term)
+                page_number = start_from_page
 
-                            # Save state
-                            self.save_state(search_term, page_number + 1)
+                if search_term.strip().lower() == "c++":
+                    current_page = page_number
+                    while True:
+                        # Use open_cpp_search_page to get to the correct page
+                        if not self.open_cpp_search_page(current_page):
+                            print(f"Failed to reach page {current_page} for C++ search.")
+                            break
+                        print(f"page {current_page}")
+                        self.process_page(search_term)
+                        soup = self.network_handler.get_current_page_soup()
+                        if not self.network_handler.has_results(soup):
+                            break
+                        current_page += 1
+                else:
+                    while True:
+                        page_url = (
+                            f"{search_base}?page={page_number}" if page_number > 1 else search_base
+                        )
 
-                        has_next_page = self.network_handler.click_next_button()
-                        # Try to find the "Next" button and click it
-                        if has_next_page:
-                            page_number += 1
-                            print(f"\npage {page_number}")
+                        if page_number > 1:
+                            print("\n")
+                        print(f"page {page_number}")
+                        self.network_handler.driver.get(page_url)
+                        self.network_handler.selenium_interaction_delay()
+                        self.process_page(search_term)
 
-                # Reset start_from_page after completing the term where it left off
+                        soup = self.network_handler.get_soup(page_url)
+                        if not self.network_handler.has_results(soup):
+                            break
+
+                        page_number += 1
+
                 start_from_page = 1
-                # After processing the saved search term, reset start_from_term
                 if start_from_term == search_term:
                     start_from_term = False
-            # Clear state here, as all searches completed successfully
+
             self.clear_state()
 
         except KeyboardInterrupt:
             print("Scraping interrupted by user.")
-            # Save state before exiting
-            self.save_state(search_term, page_number)
+            if search_term is not None and page_number is not None:
+                self.save_state(search_term, page_number)
+
         except Exception as exception:  # pylint: disable=broad-except
-            # unhandled exception
             print(f"Unhandled exception occurred: {exception}")
             print("Printing stack trace...")
             traceback.print_exc()
+
         finally:
-            # attempt to close the browser
+            try:
+                print("Closing database connection...")
+                self.job_data.close()
+            except Exception as exception:  # pylint: disable=broad-except
+                print(f"Exception while trying to close the database connection: {exception}")
+                traceback.print_exc()
+
             try:
                 print("Closing browser...")
                 self.network_handler.close()
             except Exception as exception:  # pylint: disable=broad-except
                 print(f"Exception while trying to close the browser: {exception}")
                 traceback.print_exc()
-                # Save state before exiting
-                self.save_state(search_term, page_number)
+                if search_term is not None and page_number is not None:
+                    self.save_state(search_term, page_number)
 
-            # attempt to close the database connection
-            try:
-                print("Closing database connection...")
-                self.job_data.db_handler.close()
-            except Exception as exception:  # pylint: disable=broad-except
-                print(
-                    f"Exception while trying to close the database connection: {exception}"
-                )
-                traceback.print_exc()
 
     def save_state(self, search_term, page_number):
         """
@@ -255,3 +366,14 @@ class JobScraper:
         """
         with open("scraper_state.csv", "w", newline="", encoding="utf-8") as file:
             pass
+
+
+def print_legend():
+    print("\nLegend:")
+    print("V = Valid link (new)")
+    print("I = Invalid link (new)")
+    print("X = Already validated as valid")
+    print("x = Already validated as invalid")
+
+# Call this at the start or end of your main script
+print_legend()
