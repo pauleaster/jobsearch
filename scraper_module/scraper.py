@@ -207,15 +207,29 @@ class JobScraper:
         valid, job_age = self.is_valid_link(search_term, url)
         job_date = self.job_data.calculate_job_date(job_age) if job_age is not None else None
 
+        # Extract salary from the job detail page
+        soup = self.network_handler.get_soup(url)
+        salary = self.extract_salary(soup) if soup else None
+
         self.job_data.add_or_update_link(
             search_term,
             url,
             job_number,
             job_date,
             LinkStatus.VALID if valid else LinkStatus.INVALID,
+            salary=salary  # Pass salary to the DB handler
         )
 
         print("V" if valid else "I", end="", flush=True)
+
+    def extract_salary(self, soup):
+        """
+        Extracts the salary string from the job detail page soup.
+        """
+        salary_span = soup.find("span", {"data-automation": "job-detail-salary"})
+        if salary_span:
+            return salary_span.get_text(strip=True)
+        return None
 
     def open_cpp_search_page(self, page_number):
         """
