@@ -27,7 +27,7 @@ import os
 from enum import Enum, auto
 from datetime import datetime, timedelta
 from sqlalchemy import (
-    Column, Integer, SmallInteger, String, Text, Boolean, Date, ForeignKey
+    Column, Integer, SmallInteger, String, Text, Boolean, Date, ForeignKey, DateTime
 )
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.engine.url import URL
@@ -49,6 +49,12 @@ class Job(Base):
     contact = Column(Text, nullable=True)
     application_comments = Column(Text, nullable=True)
     job_date = Column(Date, nullable=True)
+    salary = Column(Text, nullable=True)
+    position = Column(Text, nullable=True)
+    advertiser = Column(Text, nullable=True)
+    location = Column(Text, nullable=True)
+    work_type = Column(Text, nullable=True)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=True)
 
     job_search_terms = relationship("JobSearchTerm", back_populates="job")
 
@@ -56,6 +62,7 @@ class SearchTerm(Base):
     __tablename__ = 'search_terms'
     term_id = Column(SmallInteger, primary_key=True, autoincrement=True)
     term_text = Column(String, nullable=False)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=True)
 
     job_search_terms = relationship("JobSearchTerm", back_populates="search_term")
 
@@ -64,6 +71,7 @@ class JobSearchTerm(Base):
     job_id = Column(Integer, ForeignKey('jobs.job_id'), primary_key=True)
     term_id = Column(SmallInteger, ForeignKey('search_terms.term_id'), primary_key=True)
     valid = Column(Boolean, nullable=False)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=True)
 
     job = relationship("Job", back_populates="job_search_terms")
     search_term = relationship("SearchTerm", back_populates="job_search_terms")
@@ -149,7 +157,7 @@ class JobData:
         invalid = self.session.query(JobSearchTerm).filter_by(job_id=job.job_id, valid=False).first() is not None
         return {LinkStatus.VALID: valid, LinkStatus.INVALID: invalid}
 
-    def add_or_update_link(self, search_term, url, job_number, job_date, status: LinkStatus):
+    def add_or_update_link(self, search_term, url, job_number, job_date, status: LinkStatus, salary=None):
         """
         Adds a new job link to the database, categorized by the provided status.
         """
@@ -158,13 +166,15 @@ class JobData:
         # Insert or get the job
         job = self.session.query(Job).filter_by(job_number=job_number).first()
         if not job:
-            job = Job(job_number=job_number, job_url=url, job_date=job_date)
+            job = Job(job_number=job_number, job_url=url, job_date=job_date, salary=salary)
             self.session.add(job)
             self.session.commit()
         else:
             # Optionally update the job_url and job_date if needed
             job.job_url = url
             job.job_date = job_date
+            if salary is not None:
+                job.salary = salary
             self.session.commit()
 
         # Insert or get the search term
