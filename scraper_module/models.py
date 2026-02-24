@@ -54,6 +54,7 @@ class Job(Base):
     advertiser = Column(Text, nullable=True)
     location = Column(Text, nullable=True)
     work_type = Column(Text, nullable=True)
+    expired = Column(Boolean, nullable=True)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=True)
 
     job_search_terms = relationship("JobSearchTerm", back_populates="job")
@@ -157,7 +158,8 @@ class JobData:
         invalid = self.session.query(JobSearchTerm).filter_by(job_id=job.job_id, valid=False).first() is not None
         return {LinkStatus.VALID: valid, LinkStatus.INVALID: invalid}
 
-    def add_or_update_link(self, search_term, url, job_number, job_date, status: LinkStatus, salary=None):
+    def add_or_update_link(self, search_term, url, job_number, job_date, status: LinkStatus,
+                          salary=None, position=None, advertiser=None, location=None, work_type=None):
         """
         Adds a new job link to the database, categorized by the provided status.
         """
@@ -166,7 +168,16 @@ class JobData:
         # Insert or get the job
         job = self.session.query(Job).filter_by(job_number=job_number).first()
         if not job:
-            job = Job(job_number=job_number, job_url=url, job_date=job_date, salary=salary)
+            job = Job(
+                job_number=job_number,
+                job_url=url,
+                job_date=job_date,
+                salary=salary,
+                position=position,
+                advertiser=advertiser,
+                location=location,
+                work_type=work_type
+            )
             self.session.add(job)
             self.session.commit()
         else:
@@ -175,6 +186,14 @@ class JobData:
             job.job_date = job_date
             if salary is not None:
                 job.salary = salary
+            if position is not None:
+                job.position = position
+            if advertiser is not None:
+                job.advertiser = advertiser
+            if location is not None:
+                job.location = location
+            if work_type is not None:
+                job.work_type = work_type
             self.session.commit()
 
         # Insert or get the search term

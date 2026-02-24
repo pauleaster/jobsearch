@@ -207,9 +207,13 @@ class JobScraper:
         valid, job_age = self.is_valid_link(search_term, url)
         job_date = self.job_data.calculate_job_date(job_age) if job_age is not None else None
 
-        # Extract salary from the job detail page
+        # Extract fields from the job detail page
         soup = self.network_handler.get_soup(url)
         salary = self.extract_salary(soup) if soup else None
+        position = self.extract_position(soup) if soup else None
+        advertiser = self.extract_advertiser(soup) if soup else None
+        location = self.extract_location(soup) if soup else None
+        work_type = self.extract_work_type(soup) if soup else None
 
         self.job_data.add_or_update_link(
             search_term,
@@ -217,7 +221,11 @@ class JobScraper:
             job_number,
             job_date,
             LinkStatus.VALID if valid else LinkStatus.INVALID,
-            salary=salary  # Pass salary to the DB handler
+            salary=salary,
+            position=position,
+            advertiser=advertiser,
+            location=location,
+            work_type=work_type
         )
 
         print("V" if valid else "I", end="", flush=True)
@@ -229,6 +237,30 @@ class JobScraper:
         salary_span = soup.find("span", {"data-automation": "job-detail-salary"})
         if salary_span:
             return salary_span.get_text(strip=True)
+        return None
+
+    def extract_position(self, soup):
+        tag = soup.find("h1", {"data-automation": "job-detail-title"})
+        return tag.get_text(strip=True) if tag else None
+
+    def extract_advertiser(self, soup):
+        tag = soup.find("span", {"data-automation": "advertiser-name"})
+        if tag:
+            return tag.contents[0].strip() if tag.contents else tag.get_text(strip=True)
+        return None
+
+    def extract_location(self, soup):
+        tag = soup.find("span", {"data-automation": "job-detail-location"})
+        if tag:
+            a_tag = tag.find("a")
+            return a_tag.get_text(strip=True) if a_tag else tag.get_text(strip=True)
+        return None
+
+    def extract_work_type(self, soup):
+        tag = soup.find("span", {"data-automation": "job-detail-work-type"})
+        if tag:
+            a_tag = tag.find("a")
+            return a_tag.get_text(strip=True) if a_tag else tag.get_text(strip=True)
         return None
 
     def open_cpp_search_page(self, page_number):
