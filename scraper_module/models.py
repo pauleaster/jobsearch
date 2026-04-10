@@ -183,7 +183,8 @@ class JobData:
         else:
             # Optionally update the job_url and job_date if needed
             job.job_url = url
-            job.job_date = job_date
+            if job_date is not None and job.job_date is None:
+                job.job_date = job_date
             if salary is not None:
                 job.salary = salary
             if position is not None:
@@ -195,6 +196,8 @@ class JobData:
             if work_type is not None:
                 job.work_type = work_type
             self.session.commit()
+        # Set the expired status to False for new or existing jobs when adding/updating links
+        job.expired = False
 
         # Insert or get the search term
         term = self.session.query(SearchTerm).filter_by(term_text=search_term).first()
@@ -235,6 +238,12 @@ class JobData:
         )
         validities = {term_text: valid for term_text, valid in results}
         return validities
+    
+    def set_not_expired(self, job_number):
+        job = self.session.query(Job).filter_by(job_number=job_number).first()
+        if job and job.expired is not False:
+            job.expired = False
+            self.session.commit()
    
     def calculate_job_date(self, job_age):
         """

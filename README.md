@@ -1,4 +1,3 @@
-
 # JobScraper
 
 Usage:
@@ -6,6 +5,20 @@ Usage:
 ```python
 scraper = JobScraper()
 scraper.perform_searches(["C++", "python", "data science"])
+```
+
+## Updates
+
+- Supports scraping from both remote and default URLs, with combined search (remote first) if enabled in config.
+- Main job fields (salary, position, advertiser, location, work type, expired) are now extracted and stored.
+- Scraper can resume from the exact search term, URL, and page after interruption.
+
+## Running
+
+Activate your environment, then run:
+
+```sh
+python -m main
 ```
 
 The resulting job URLs are stored in a PostgreSQL database, categorized based on whether the search term was found in the resulting job description or not.

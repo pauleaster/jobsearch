@@ -16,6 +16,7 @@ policies.
 """
 
 import time
+import re
 
 from selenium import webdriver
 from selenium.webdriver.support.ui import WebDriverWait
@@ -28,9 +29,7 @@ from selenium.common.exceptions import (
     NoSuchElementException,
     TimeoutException,
 )
-import requests
 from bs4 import BeautifulSoup
-import psutil
 
 from .delays import DelaySettings
 
@@ -57,13 +56,6 @@ class NetworkHandler:
         self.driver.get(url)
         self.initial_url = url
 
-        # Store the driver PID immediately after creation
-        try:
-            self.driver_pid = self.driver.service.process.pid
-            print(f"Selenium driver PID: {self.driver_pid}")
-        except Exception:
-            self.driver_pid = None
-            print("Could not retrieve Selenium driver PID.")
 
     def selenium_interaction_delay(self):
         """
@@ -91,9 +83,9 @@ class NetworkHandler:
         """
         Format the search term for use in a job search URL.
         This method replaces spaces with hyphens and trims whitespace.
-        Also replaces ++ with %2B%2B for C++ search term.
+        Also replaces ++ with %2B%2B for C++ and # with %23 for C#.
         """
-        return search_term.strip().replace(" ", "-").replace("++", "%2B%2B")
+        return search_term.strip().replace(" ", "-").replace("++", "%2B%2B").replace("#", "%23")
 
     def extract_base_and_location(self):
         """
@@ -109,26 +101,55 @@ class NetworkHandler:
     def initiate_search(self, search_term):
         """
         Initiate a search by constructing the URL based on the search term and current location,
-        then navigating to it. For 'C++', simulate user input for accurate results.
+        then navigating to it. For 'C++' or terms containing '/', uses keyword query params.
         """
         self.search_term = search_term
         base_url, location = self.extract_base_and_location()
         self.formatted_term = self.format_search_term(search_term)
-        search_url = f"{base_url}/{self.formatted_term}-jobs/{location}"
 
         if search_term.strip().lower() == "c++":
-            # Go to the base search page first
+            # Bring this window to front and request OS focus
+            self.driver.switch_to.window(self.driver.current_window_handle)
+            self.driver.execute_script("window.focus();")
             self.driver.get(f"{base_url}/jobs/{location}")
-            self.selenium_interaction_delay()
-            # Find the input by placeholder and enter "C++"
-            search_input = self.driver.find_element(By.XPATH, '//input[@placeholder="Enter keywords"]')
+
+            # Wait until the search input is present and interactable
+            try:
+                search_input = WebDriverWait(self.driver, 15).until(
+                    EC.element_to_be_clickable((By.XPATH, '//input[@placeholder="Enter keywords" or contains(@placeholder, "looking for")]'))
+                )
+            except TimeoutException:
+                # Diagnostic snapshot on failure
+                self.driver.save_screenshot("cpp_search_input_missing.png")
+                print(f"DEBUG: URL = {self.driver.current_url}")
+                print(f"DEBUG: title = {self.driver.title}")
+                inputs = self.driver.find_elements(By.TAG_NAME, "input")
+                print(f"DEBUG: inputs on page = {[e.get_attribute('placeholder') for e in inputs]}")
+                raise
+
             search_input.clear()
             search_input.send_keys("C++")
-            # Find and click the search button
-            search_button = self.driver.find_element(By.ID, "searchButton")
+
+            search_button = WebDriverWait(self.driver, 10).until(
+                EC.element_to_be_clickable((By.ID, "searchButton"))
+            )
             search_button.click()
             self.selenium_interaction_delay()
+            self.search_base = None
+            self.page_param_sep = None
+        elif "/" in search_term:
+            # Terms like "ci/cd" must use the keyword query parameter URL
+            encoded_term = search_term.strip().replace("/", "%2F").replace(" ", "+")
+            search_url = f"{base_url}/jobs/{location}?keywords={encoded_term}"
+            self.search_base = search_url
+            self.page_param_sep = "&"
+            print(f"Navigating to search URL: {search_url}")
+            self.driver.get(search_url)
+            self.selenium_interaction_delay()
         else:
+            search_url = f"{base_url}/{self.formatted_term}-jobs/{location}"
+            self.search_base = search_url
+            self.page_param_sep = "?"
             print(f"Navigating to search URL: {search_url}")
             self.driver.get(search_url)
             self.selenium_interaction_delay()
@@ -206,22 +227,14 @@ class NetworkHandler:
 
     def close(self):
         """
-        Close the Selenium browser window and forcibly kill the process if needed.
+        Gracefully close the Selenium driver.
         """
         try:
-            self.driver.quit()
-            time.sleep(2)
-            if self.driver_pid:
-                print(f"Selenium driver parent PID (chromedriver): {self.driver_pid}")
-                parent = psutil.Process(self.driver_pid)
-                for child in parent.children(recursive=True):
-                    print(f"Killing child process: {child.pid}")
-                    child.kill()
-                if parent.is_running():
-                    print(f"Killing driver process: {parent.pid}")
-                    parent.kill()
+            if getattr(self, "driver", None):
+                print("Calling driver.quit()...", flush=True)
+                self.driver.quit()
         except Exception as e:
-            print(f"Exception during browser close: {e}")
+            print(f"driver.quit() raised: {e!r}", flush=True)
 
     def is_429_page(self, soup, url=None):
         """
@@ -240,8 +253,12 @@ class NetworkHandler:
         """
         if soup is None:
             return False
-        text = soup.get_text(separator=" ", strip=True).lower()
-        return "no matching search results" not in text
+        text = soup.get_text(separator=" ", strip=True).lower().replace("\u2019", "'")
+        if "no matching search results" in text:
+            return False
+        if "we couldn't find that page" in text:
+            return False
+        return True
 
     def get_current_page_soup(self):
         """
@@ -249,3 +266,26 @@ class NetworkHandler:
         """
         html = self.driver.page_source
         return BeautifulSoup(html, "html.parser")
+
+    def refresh(self):
+        """
+        Refresh the current page to keep the Selenium session alive.
+        """
+        try:
+            self.driver.refresh()
+            self.selenium_interaction_delay()
+        except Exception as e:
+            print(f"Refresh failed: {e}")
+
+    @staticmethod
+    def truncate_featured_jobs(soup):
+        """
+        Truncates the HTML at <h4 ...>Featured jobs</h4> and returns a new soup object
+        containing only the content before this section.
+        """
+        html = str(soup)
+        match = re.search(r"<h4[^>]*>\s*Featured jobs\s*</h4>", html, re.IGNORECASE)
+        if match:
+            truncated_html = html[:match.start()]
+            return BeautifulSoup(truncated_html, "html.parser")
+        return soup

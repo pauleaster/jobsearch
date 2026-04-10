@@ -3,29 +3,6 @@ from scraper_module.models import JobData, Job, JobSearchTerm
 from scraper_module.scraper import JobScraper
 from datetime import datetime
 
-def extract_position(soup):
-    tag = soup.find("h1", {"data-automation": "job-detail-title"})
-    return tag.get_text(strip=True) if tag else None
-
-def extract_advertiser(soup):
-    tag = soup.find("span", {"data-automation": "advertiser-name"})
-    if tag:
-        return tag.contents[0].strip() if tag.contents else tag.get_text(strip=True)
-    return None
-
-def extract_location(soup):
-    tag = soup.find("span", {"data-automation": "job-detail-location"})
-    if tag:
-        a_tag = tag.find("a")
-        return a_tag.get_text(strip=True) if a_tag else tag.get_text(strip=True)
-    return None
-
-def extract_work_type(soup):
-    tag = soup.find("span", {"data-automation": "job-detail-work-type"})
-    if tag:
-        a_tag = tag.find("a")
-        return a_tag.get_text(strip=True) if a_tag else tag.get_text(strip=True)
-    return None
 
 def main():
     import time
@@ -61,15 +38,27 @@ def main():
 
         soup = scraper.network_handler.get_soup(job.job_url)
         if soup:
-            position = extract_position(soup)
-            advertiser = extract_advertiser(soup)
-            location = extract_location(soup)
-            work_type = extract_work_type(soup)
+            # Check for "no longer advertised" message
+            invalid_h2 = soup.find("h2", string="This job is no longer advertised")
+            if invalid_h2:
+                job.expired = True
+                job.updated_at = datetime.now()
+                session.commit()
+                print("  -> Job page loaded, but job is no longer advertised. Marked as expired.")
+                continue
+
+            position = scraper.extract_position(soup)
+            advertiser = scraper.extract_advertiser(soup)
+            location = scraper.extract_location(soup)
+            work_type = scraper.extract_work_type(soup)
+            salary = scraper.extract_salary(soup)
 
             job.position = position if position else job.position
             job.advertiser = advertiser if advertiser else job.advertiser
             job.location = location if location else job.location
             job.work_type = work_type if work_type else job.work_type
+            job.salary = salary if salary else job.salary
+            job.expired = False  # Mark as not expired
 
             job.updated_at = datetime.now()
 

@@ -15,6 +15,7 @@ Note:
 Ensure that the configuration file exists and has the required keys before
 running any scraper tool that depends on this module.
 """
+
 import configparser
 import os
 from .auth_method import AuthMethod
@@ -25,30 +26,37 @@ config_path = os.path.expanduser("~/.scraper/scraper.conf")
 if os.path.exists(config_path):
     config.read(config_path)
 
-
     # Reading the DEFAULT section
     if "URL" in config["DEFAULT"]:
         JOB_SCRAPER_DEFAULT_URL = config["DEFAULT"]["URL"]
     else:
         raise ValueError("URL key not found in the configuration file!")
-    
+
     # Reading the REMOTE section
     if "URL" in config["REMOTE"]:
         JOB_SCRAPER_REMOTE_URL = config["REMOTE"]["URL"]
     else:
-        raise ValueError("URL key not found in the REMOTE section of the configuration file!")
+        raise ValueError(
+            "URL key not found in the REMOTE section of the configuration file!"
+        )
 
     # Reading the DATABASE section
     if "DATABASE" in config:
         DB_NAME = config["DATABASE"].get("DB_NAME")
         if DB_NAME is None:
-            raise ValueError("DB_NAME is required but not found in DATABASE configuration!")
+            raise ValueError(
+                "DB_NAME is required but not found in DATABASE configuration!"
+            )
 
         DB_USER = config["DATABASE"].get("DB_USER")  # Will be None if not present
-        DB_PASSWORD = config["DATABASE"].get("DB_PASSWORD")  # Will be None if not present
+        DB_PASSWORD = config["DATABASE"].get(
+            "DB_PASSWORD"
+        )  # Will be None if not present
         DB_HOST = config["DATABASE"].get("DB_HOST", "localhost")
-        DB_PORT = config["DATABASE"].get("DB_PORT", "1433")  # Updated default port for SQL Server
-        
+        DB_PORT = config["DATABASE"].get(
+            "DB_PORT", "1433"
+        )  # Updated default port for SQL Server
+
         # New configuration for authentication method
         auth_method_str = config["DATABASE"].get("AUTH_METHOD", "WINDOWS_AUTH")
         if auth_method_str == "WINDOWS_AUTH":
@@ -58,6 +66,14 @@ if os.path.exists(config_path):
 
     else:
         raise ValueError("DATABASE section not found in the configuration file!")
+
+    # Reading the SCRAPER section
+    if "SCRAPER" in config:
+        COMBINED_SEARCH = config["SCRAPER"].getboolean("COMBINED_SEARCH", False)
+        USE_REMOTE = config["SCRAPER"].getboolean("USE_REMOTE", False)
+    else:
+        COMBINED_SEARCH = False  # Default value if SCRAPER section is missing
+        USE_REMOTE = False  # Default value if SCRAPER section is missing
 
 else:
     raise ValueError(f"Configuration file not found at {config_path}")
