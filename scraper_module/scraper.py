@@ -436,6 +436,18 @@ class JobScraper:
             if search_term is not None and page_number is not None:
                 self.save_state(search_term, url_index, page_number)
 
+        except OperationalError as exception:
+            if search_term is not None and page_number is not None:
+                self.save_state(search_term, url_index, page_number)
+            orig = str(exception.orig) if exception.orig else ""
+            if "08S01" in orig or "233" in orig or "Communication link failure" in orig:
+                print("FATAL: Database connection lost mid-scrape (pipe broken / communication link failure).")
+                print("Check SQL Server idle timeout settings or network stability.")
+            else:
+                print(f"FATAL: Database operational error: {exception}")
+            print("Printing stack trace...")
+            traceback.print_exc()
+
         except Exception as exception:  # pylint: disable=broad-except
             if search_term is not None and page_number is not None:
                 self.save_state(search_term, url_index, page_number)

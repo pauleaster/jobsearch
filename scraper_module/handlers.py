@@ -193,7 +193,7 @@ class NetworkHandler:
             )
         self.last_request_time = time.time()
 
-    def get_soup(self, url, max_retries=5, base_delay=30):
+    def get_soup(self, url, max_retries=5, base_delay=60):
         """
         Use Selenium to fetch the page and return a BeautifulSoup object.
         Retries on 429-like rate limiting detected in the page content, with exponential backoff.
@@ -244,6 +244,14 @@ class NetworkHandler:
         text = soup.get_text(separator=" ", strip=True).lower()
         if "too many requests" in text:
             print(f'"too many requests" found in page for URL: {url}')
+            return True
+        # Detect the site's 503 "Technical error" page
+        title = soup.title.string.lower() if soup.title and soup.title.string else ""
+        if "technical error" in title:
+            print(f'503 technical error page detected for URL: {url}')
+            return True
+        if "can we try that again" in text:
+            print(f'503 technical error page detected (body text) for URL: {url}')
             return True
         return False
 
