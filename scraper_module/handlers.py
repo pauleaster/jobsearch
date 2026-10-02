@@ -15,23 +15,22 @@ Note: Always handle web scraping responsibly, respecting robots.txt and website
 policies.
 """
 
-import time
-import re
 import random
+import re
+import time
 from datetime import datetime
 
+from bs4 import BeautifulSoup
 from selenium import webdriver
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
 from selenium.common.exceptions import (
     ElementClickInterceptedException,
     NoSuchElementException,
     TimeoutException,
 )
-from bs4 import BeautifulSoup
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.wait import WebDriverWait
 
 from .delays import DelaySettings
 
@@ -55,12 +54,9 @@ class NetworkHandler:
         self.wait = WebDriverWait(self.driver, self.successive_url_read_delay)
         print(f"Opening {url}")
         self.handle_successive_url_read_delay()
-        self.driver.get(url) # Network access
+        self.driver.get(url)  # Network access
         self.initial_url = url
         self._successive_url_delay_elapsed = 0
-
-        
-
 
     @staticmethod
     def _create_driver():
@@ -69,12 +65,13 @@ class NetworkHandler:
         chrome_options.add_experimental_option("excludeSwitches", ["enable-logging"])
         return webdriver.Chrome(options=chrome_options)
 
-
     def selenium_interaction_delay(self):
         """
         Delay for Selenium interactions to allow the browser to react.
         """
-        time.sleep(self._apply_delay_variance(DelaySettings.SELENIUM_INTERACTION_DELAY.value))
+        time.sleep(
+            self._apply_delay_variance(DelaySettings.SELENIUM_INTERACTION_DELAY.value)
+        )
 
     @staticmethod
     def _apply_delay_variance(delay_seconds):
@@ -107,16 +104,21 @@ class NetworkHandler:
         This method replaces spaces with hyphens and trims whitespace.
         Also replaces ++ with %2B%2B for C++ and # with %23 for C#.
         """
-        return search_term.strip().replace(" ", "-").replace("++", "%2B%2B").replace("#", "%23")
+        return (
+            search_term.strip()
+            .replace(" ", "-")
+            .replace("++", "%2B%2B")
+            .replace("#", "%23")
+        )
 
     def extract_base_and_location(self):
         """
         Extract the base URL and location segment from the current URL.
         Returns (base_url, location).
         """
-        url = self.initial_url.rstrip('/')
-        parts = url.split('/')
-        base_url = '/'.join(parts[:3])
+        url = self.initial_url.rstrip("/")
+        parts = url.split("/")
+        base_url = "/".join(parts[:3])
         location = parts[-1]
         return base_url, location
 
@@ -139,7 +141,7 @@ class NetworkHandler:
             # Wait until the search input is present and interactable
             try:
                 search_input = WebDriverWait(self.driver, 15).until(
-                    EC.element_to_be_clickable((By.NAME, 'keywords'))
+                    EC.element_to_be_clickable((By.NAME, "keywords"))
                 )
             except TimeoutException:
                 # Diagnostic snapshot on failure
@@ -147,7 +149,9 @@ class NetworkHandler:
                 print(f"DEBUG: URL = {self.driver.current_url}")
                 print(f"DEBUG: title = {self.driver.title}")
                 inputs = self.driver.find_elements(By.TAG_NAME, "input")
-                print(f"DEBUG: inputs on page = {[e.get_attribute('placeholder') for e in inputs]}")
+                print(
+                    f"DEBUG: inputs on page = {[e.get_attribute('placeholder') for e in inputs]}"
+                )
                 raise
 
             search_input.clear()
@@ -247,13 +251,17 @@ class NetworkHandler:
                 soup = BeautifulSoup(html, "html.parser")
                 if self.is_cloudflare_challenge_page(soup):
                     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    print(f"[{timestamp}] Cloudflare challenge page detected for URL: {url}")
+                    print(
+                        f"[{timestamp}] Cloudflare challenge page detected for URL: {url}"
+                    )
                     self.recover_browser(url)
                     retries += 1
                     continue
                 if self.is_429_page(soup, url):
                     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    print(f"[{timestamp}] 429-like page detected, retrying after {delay} seconds...")
+                    print(
+                        f"[{timestamp}] 429-like page detected, retrying after {delay} seconds..."
+                    )
                     time.sleep(self._apply_delay_variance(delay))
                     delay *= 2  # Exponential backoff
                     retries += 1
@@ -331,11 +339,13 @@ class NetworkHandler:
         title = soup.title.string.lower() if soup.title and soup.title.string else ""
         if "technical error" in title:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            print(f'[{timestamp}] 503 technical error page detected for URL: {url}')
+            print(f"[{timestamp}] 503 technical error page detected for URL: {url}")
             return True
         if "can we try that again" in text:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            print(f'[{timestamp}] 503 technical error page detected (body text) for URL: {url}')
+            print(
+                f"[{timestamp}] 503 technical error page detected (body text) for URL: {url}"
+            )
             return True
         return False
 
@@ -364,10 +374,14 @@ class NetworkHandler:
 
         inner_span = total_jobs_message.find("span")
         text = (
-            inner_span.get_text(separator=" ", strip=True)
-            if inner_span is not None
-            else total_jobs_message.get_text(separator=" ", strip=True)
-        ).lower().replace("\u2019", "'")
+            (
+                inner_span.get_text(separator=" ", strip=True)
+                if inner_span is not None
+                else total_jobs_message.get_text(separator=" ", strip=True)
+            )
+            .lower()
+            .replace("\u2019", "'")
+        )
 
         match = re.search(r"(\d[\d,]*)\s+jobs?\b", text)
         if match:
@@ -405,6 +419,6 @@ class NetworkHandler:
         html = str(soup)
         match = re.search(r"<h4[^>]*>\s*Featured jobs\s*</h4>", html, re.IGNORECASE)
         if match:
-            truncated_html = html[:match.start()]
+            truncated_html = html[: match.start()]
             return BeautifulSoup(truncated_html, "html.parser")
         return soup

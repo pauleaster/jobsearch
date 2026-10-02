@@ -5,7 +5,9 @@ delays.py
 This module defines the delay constants for network handling and
 determines the number of retries for requests.
 """
+
 from enum import Enum
+
 
 class DelaySettings(Enum):
     """

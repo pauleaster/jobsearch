@@ -1,6 +1,5 @@
-from scraper_module.scraper import JobScraper, LinkStatus
 from scraper_module.expired import mark_expired_jobs
-
+from scraper_module.scraper import JobScraper
 
 A_CORE_BACKEND = [
     "python",
@@ -156,14 +155,14 @@ H_LANG = [
 ]
 
 SEARCH_TERMS = (
-    A_CORE_BACKEND +
-    B_API_LAYER +
-    C_AI_ML +
-    D_BACKEND_ENV +
-    E_FRONTEND +
-    F_EXCLUDE +
-    G_ROLE +
-    H_LANG
+    A_CORE_BACKEND
+    + B_API_LAYER
+    + C_AI_ML
+    + D_BACKEND_ENV
+    + E_FRONTEND
+    + F_EXCLUDE
+    + G_ROLE
+    + H_LANG
 )
 
 
@@ -174,5 +173,5 @@ if __name__ == "__main__":
     scraper = JobScraper(load_network_handler=True)
     mark_expired_jobs(scraper)
     scraper.perform_searches(search_terms)
-    
+
     print("Finished scraping.\n")

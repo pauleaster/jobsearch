@@ -3,7 +3,8 @@ from datetime import datetime
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
-from .config import DB_NAME, DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, AUTH_METHOD
+
+from .config import AUTH_METHOD, DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_USER
 
 
 def get_connection_string():
@@ -12,20 +13,18 @@ def get_connection_string():
 
     if AUTH_METHOD.name == "WINDOWS_AUTH":
         return (
-            f"mssql+pyodbc://@{host}/{DB_NAME}"
-            f"?driver={driver}&trusted_connection=yes"
+            f"mssql+pyodbc://@{host}/{DB_NAME}?driver={driver}&trusted_connection=yes"
         )
     else:  # SQL_SERVER_AUTH
         return (
-            f"mssql+pyodbc://{DB_USER}:{DB_PASSWORD}@{host}/{DB_NAME}"
-            f"?driver={driver}"
+            f"mssql+pyodbc://{DB_USER}:{DB_PASSWORD}@{host}/{DB_NAME}?driver={driver}"
         )
+
 
 connection_string = get_connection_string()
 print(f"Using connection string: {connection_string}")  # Debugging output
 engine = create_engine(connection_string, echo=False, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine)
-
 
 
 def commit_with_retry(
@@ -84,5 +83,6 @@ if __name__ == "__main__":
     except Exception as e:
         print("Database connection test failed:", e)
         import traceback
+
         traceback.print_exc()
-        raise SystemExit(1)
+        raise SystemExit(1) from None

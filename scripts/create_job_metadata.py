@@ -13,15 +13,15 @@ from __future__ import annotations
 import csv
 import re
 import shutil
-from pathlib import Path
 import sys
+from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scraper_module.handlers import NetworkHandler
-
+# This import depends on the repository-root sys.path bootstrap above.
+from scraper_module.handlers import NetworkHandler  # noqa: E402
 
 BACKEND_EXPORT_ROOT = Path(
     r"C:\Users\paulj\repos\dotnet\Jobsearch_backend_combined\Jobsearch_backend_py"
@@ -40,8 +40,7 @@ def iter_csv_rows(csv_path: Path):
     """Yield CSV rows as dictionaries."""
     with csv_path.open("r", encoding="utf-8", newline="") as file:
         reader = csv.DictReader(file)
-        for row in reader:
-            yield row
+        yield from reader
 
 
 def find_latest_snapshot_dir(runs_root: Path) -> Path:
@@ -86,7 +85,9 @@ def main() -> None:
         print("No rows found in CSV.")
         return
 
-    first_url = next((r.get("job_url", "").strip() for r in rows if r.get("job_url")), None)
+    first_url = next(
+        (r.get("job_url", "").strip() for r in rows if r.get("job_url")), None
+    )
     if not first_url:
         print("No valid job_url values found in CSV.")
         return

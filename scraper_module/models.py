@@ -22,22 +22,24 @@ Note: Ensure lockfiles are managed properly, especially in multi-threaded scenar
 """
 
 import os
-from enum import Enum, auto
 from datetime import datetime, timedelta
+from enum import Enum, auto
+
 from sqlalchemy import (
+    Boolean,
     Column,
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
     Integer,
     SmallInteger,
     String,
     Text,
-    Boolean,
-    Date,
-    ForeignKey,
-    DateTime,
-    Index,
 )
-from sqlalchemy.orm import declarative_base, relationship
-from .database import engine, SessionLocal, commit_with_retry
+from sqlalchemy.orm import Mapped, declarative_base, mapped_column, relationship
+
+from .database import SessionLocal, commit_with_retry, engine
 
 Base = declarative_base()
 
@@ -70,8 +72,8 @@ class Job(Base):
     advertiser = Column(Text, nullable=True)
     location = Column(Text, nullable=True)
     work_type = Column(Text, nullable=True)
-    expired = Column(Boolean, nullable=True)
-    updated_at = Column(
+    expired: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    updated_at: Mapped[datetime | None] = mapped_column(
         DateTime,
         default=datetime.now,
         onupdate=datetime.now,
@@ -99,8 +101,8 @@ class JobSearchTerm(Base):
     __tablename__ = "job_search_terms"
     job_id = Column(Integer, ForeignKey("jobs.job_id"), primary_key=True)
     term_id = Column(SmallInteger, ForeignKey("search_terms.term_id"), primary_key=True)
-    valid = Column(Boolean, nullable=False)
-    updated_at = Column(
+    valid: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    updated_at: Mapped[datetime | None] = mapped_column(
         DateTime, default=datetime.now, onupdate=datetime.now, nullable=True
     )
 

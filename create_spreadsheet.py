@@ -1,7 +1,10 @@
+from datetime import datetime
+
 import pandas as pd
 from sqlalchemy.inspection import inspect
-from scraper_module.models import JobData, SearchTerm, Job, JobSearchTerm
-from datetime import datetime
+
+from scraper_module.models import Job, JobData, JobSearchTerm, SearchTerm
+
 
 def main():
     job_data = JobData()
@@ -24,7 +27,7 @@ def main():
         row = {col: getattr(job, col) for col in job_columns}
         valid_count = 0
         # Add a column for each search term
-        for term_id, term_text in zip(search_term_ids, search_term_texts):
+        for term_id, term_text in zip(search_term_ids, search_term_texts, strict=True):
             valid = (
                 session.query(JobSearchTerm)
                 .filter_by(job_id=job.job_id, term_id=term_id, valid=True)
@@ -41,7 +44,9 @@ def main():
     filename = f"jobsearch_export{timestamp}.xlsx"
 
     # Add a helper column for salary presence (1 if salary present, else 0)
-    df["_has_salary"] = df["salary"].notnull().astype(int) if "salary" in df.columns else 0
+    df["_has_salary"] = (
+        df["salary"].notnull().astype(int) if "salary" in df.columns else 0
+    )
 
     # Native sorting: valid_term_count DESC, has_salary DESC, 'python' DESC, updated_at DESC
     sort_fields = ["valid_term_count", "_has_salary"]
@@ -59,6 +64,7 @@ def main():
 
     df.to_excel(filename, index=False)
     print(f"Spreadsheet created: {filename}")
+
 
 if __name__ == "__main__":
     main()
