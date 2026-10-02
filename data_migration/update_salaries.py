@@ -1,4 +1,5 @@
 import pandas as pd
+from scraper_module.database import commit_with_retry
 from scraper_module.models import JobData, Job, JobSearchTerm
 from scraper_module.scraper import JobScraper
 
@@ -29,7 +30,7 @@ def main():
             salary = scraper.extract_salary(soup)
             if salary:
                 job.salary = salary
-                session.commit()
+                commit_with_retry(session)
                 updated_count += 1
                 print(f"  -> Salary updated: {salary}")
             else:

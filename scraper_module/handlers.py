@@ -17,6 +17,8 @@ policies.
 
 import time
 import re
+import random
+from datetime import datetime
 
 from selenium import webdriver
 from selenium.webdriver.support.ui import WebDriverWait
@@ -47,21 +49,40 @@ class NetworkHandler:
         self.successive_url_read_delay = DelaySettings.SUCCESSIVE_URL_READ_DELAY.value
         self.last_request_time = 0
         self.time_since_last_request = 0
-        chrome_options = Options()
-        chrome_options.add_argument("--log-level=3")  # Suppress most logs
-        chrome_options.add_experimental_option("excludeSwitches", ["enable-logging"])  # Suppress DevTools logs
-        self.driver = webdriver.Chrome(options=chrome_options)
+        self.bytes_fetched = 0
+        self.cloudflare_retry_delay = DelaySettings.CLOUDFLARE_RETRY_DELAY.value
+        self.driver = self._create_driver()
         self.wait = WebDriverWait(self.driver, self.successive_url_read_delay)
         print(f"Opening {url}")
-        self.driver.get(url)
+        self.handle_successive_url_read_delay()
+        self.driver.get(url) # Network access
         self.initial_url = url
+        self._successive_url_delay_elapsed = 0
+
+        
+
+
+    @staticmethod
+    def _create_driver():
+        chrome_options = Options()
+        chrome_options.add_argument("--log-level=3")
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-logging"])
+        return webdriver.Chrome(options=chrome_options)
 
 
     def selenium_interaction_delay(self):
         """
         Delay for Selenium interactions to allow the browser to react.
         """
-        time.sleep(DelaySettings.SELENIUM_INTERACTION_DELAY.value)
+        time.sleep(self._apply_delay_variance(DelaySettings.SELENIUM_INTERACTION_DELAY.value))
+
+    @staticmethod
+    def _apply_delay_variance(delay_seconds):
+        """
+        Apply a positive variance factor to the provided delay.
+        """
+        variance_multiplier = 1 + random.uniform(0, DelaySettings.VARIANCE_FACTOR.value)
+        return delay_seconds * variance_multiplier
 
     def find_elements(self, by, value):  # pylint: disable=invalid-name
         """
@@ -75,6 +96,7 @@ class NetworkHandler:
         """
         Find and return job links on the current page.
         """
+        self.get_current_page_soup()
         xpath_expression = '//a[contains(@href, "/job/")]'
         return self.find_elements(By.XPATH, xpath_expression)
 
@@ -111,12 +133,13 @@ class NetworkHandler:
             # Bring this window to front and request OS focus
             self.driver.switch_to.window(self.driver.current_window_handle)
             self.driver.execute_script("window.focus();")
+            self.handle_successive_url_read_delay()
             self.driver.get(f"{base_url}/jobs/{location}")
 
             # Wait until the search input is present and interactable
             try:
                 search_input = WebDriverWait(self.driver, 15).until(
-                    EC.element_to_be_clickable((By.XPATH, '//input[@placeholder="Enter keywords" or contains(@placeholder, "looking for")]'))
+                    EC.element_to_be_clickable((By.NAME, 'keywords'))
                 )
             except TimeoutException:
                 # Diagnostic snapshot on failure
@@ -144,6 +167,7 @@ class NetworkHandler:
             self.search_base = search_url
             self.page_param_sep = "&"
             print(f"Navigating to search URL: {search_url}")
+            self.handle_successive_url_read_delay()
             self.driver.get(search_url)
             self.selenium_interaction_delay()
         else:
@@ -151,6 +175,7 @@ class NetworkHandler:
             self.search_base = search_url
             self.page_param_sep = "?"
             print(f"Navigating to search URL: {search_url}")
+            self.handle_successive_url_read_delay()
             self.driver.get(search_url)
             self.selenium_interaction_delay()
 
@@ -168,6 +193,11 @@ class NetworkHandler:
                     )
                 )
             )
+            time.sleep(
+                self._apply_delay_variance(
+                    DelaySettings.SCROLL_TO_NEXT_BUTTON_DELAY.value
+                )
+            )
             next_button.click()
             self.selenium_interaction_delay()
             return True  # Successfully clicked the button
@@ -176,21 +206,28 @@ class NetworkHandler:
             ElementClickInterceptedException,
             NoSuchElementException,
             TimeoutException,
-        ):
-            return (
-                False  # Failed to click the button because of one of these exceptions
-            )
+        ) as exception:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            if isinstance(exception, ElementClickInterceptedException):
+                print(f"[{timestamp}] Next button click intercepted.")
+            elif isinstance(exception, NoSuchElementException):
+                print(f"[{timestamp}] Next button not found.")
+            elif isinstance(exception, TimeoutException):
+                print(f"[{timestamp}] Timed out waiting for the Next button.")
+            else:
+                print(f"[{timestamp}] Failed to click the Next button: {exception}")
+            return False
 
     def handle_successive_url_read_delay(self):
         """
         Implement a delay between successive URL reads based on `DelaySettings`.
         """
+        successive_url_read_delay = self._apply_delay_variance(
+            DelaySettings.SUCCESSIVE_URL_READ_DELAY.value
+        )
         self.time_since_last_request = time.time() - self.last_request_time
-        if self.time_since_last_request < DelaySettings.SUCCESSIVE_URL_READ_DELAY.value:
-            time.sleep(
-                DelaySettings.SUCCESSIVE_URL_READ_DELAY.value
-                - self.time_since_last_request
-            )
+        if self.time_since_last_request < successive_url_read_delay:
+            time.sleep(successive_url_read_delay - self.time_since_last_request)
         self.last_request_time = time.time()
 
     def get_soup(self, url, max_retries=5, base_delay=60):
@@ -203,20 +240,29 @@ class NetworkHandler:
         last_exception = None
         while retries < max_retries:
             try:
+                self.handle_successive_url_read_delay()
                 self.driver.get(url)
                 self.selenium_interaction_delay()
                 html = self.driver.page_source
                 soup = BeautifulSoup(html, "html.parser")
+                if self.is_cloudflare_challenge_page(soup):
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    print(f"[{timestamp}] Cloudflare challenge page detected for URL: {url}")
+                    self.recover_browser(url)
+                    retries += 1
+                    continue
                 if self.is_429_page(soup, url):
-                    print(f"429-like page detected, retrying after {delay} seconds...")
-                    time.sleep(delay)
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    print(f"[{timestamp}] 429-like page detected, retrying after {delay} seconds...")
+                    time.sleep(self._apply_delay_variance(delay))
                     delay *= 2  # Exponential backoff
                     retries += 1
                     continue
+                self.bytes_fetched += len(html.encode("utf-8"))
                 return soup
             except Exception as exception:
                 print("E", end="")
-                time.sleep(delay)
+                time.sleep(self._apply_delay_variance(delay))
                 delay *= 2  # Exponential backoff
                 retries += 1
                 last_exception = exception
@@ -236,6 +282,41 @@ class NetworkHandler:
         except Exception as e:
             print(f"driver.quit() raised: {e!r}", flush=True)
 
+    def recover_browser(self, url):
+        """
+        Close the current browser session, wait, and recreate it before retrying.
+        """
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(
+            f"[{timestamp}] Cloudflare challenge detected for URL: {url}. Closing browser and retrying after {self.cloudflare_retry_delay} seconds..."
+        )
+        self.close()
+        time.sleep(self._apply_delay_variance(self.cloudflare_retry_delay))
+        self.driver = self._create_driver()
+        self.wait = WebDriverWait(self.driver, self.successive_url_read_delay)
+        self.driver.get(url)
+        self.selenium_interaction_delay()
+
+    def is_cloudflare_challenge_page(self, soup):
+        """
+        Detect Cloudflare verification pages that block normal scraping.
+        """
+        text = soup.get_text(separator=" ", strip=True).lower()
+        title = soup.title.string.lower() if soup.title and soup.title.string else ""
+        html = str(soup).lower()
+
+        if "just a moment" in title:
+            return True
+        if "performing security verification" in text:
+            return True
+        if "verify you are a human" in text:
+            return True
+        if "verification successful" in text and "cloudflare" in text:
+            return True
+        if "challenges.cloudflare.com" in html:
+            return True
+        return False
+
     def is_429_page(self, soup, url=None):
         """
         Detect if the loaded page is a 429 Too Many Requests error page.
@@ -243,15 +324,18 @@ class NetworkHandler:
         """
         text = soup.get_text(separator=" ", strip=True).lower()
         if "too many requests" in text:
-            print(f'"too many requests" found in page for URL: {url}')
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f'[{timestamp}] "too many requests" found in page for URL: {url}')
             return True
         # Detect the site's 503 "Technical error" page
         title = soup.title.string.lower() if soup.title and soup.title.string else ""
         if "technical error" in title:
-            print(f'503 technical error page detected for URL: {url}')
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f'[{timestamp}] 503 technical error page detected for URL: {url}')
             return True
         if "can we try that again" in text:
-            print(f'503 technical error page detected (body text) for URL: {url}')
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f'[{timestamp}] 503 technical error page detected (body text) for URL: {url}')
             return True
         return False
 
@@ -268,12 +352,39 @@ class NetworkHandler:
             return False
         return True
 
+    def extract_job_count(self, soup):
+        """
+        Extract the displayed total job count from the search results page.
+        """
+        if soup is None:
+            return None
+        total_jobs_message = soup.find(attrs={"data-automation": "totalJobsMessage"})
+        if total_jobs_message is None:
+            return None
+
+        inner_span = total_jobs_message.find("span")
+        text = (
+            inner_span.get_text(separator=" ", strip=True)
+            if inner_span is not None
+            else total_jobs_message.get_text(separator=" ", strip=True)
+        ).lower().replace("\u2019", "'")
+
+        match = re.search(r"(\d[\d,]*)\s+jobs?\b", text)
+        if match:
+            return int(match.group(1).replace(",", ""))
+        return None
+
     def get_current_page_soup(self):
         """
         Return a BeautifulSoup object for the current Selenium page source.
         """
         html = self.driver.page_source
-        return BeautifulSoup(html, "html.parser")
+        soup = BeautifulSoup(html, "html.parser")
+        if self.is_cloudflare_challenge_page(soup):
+            self.recover_browser(self.driver.current_url)
+            html = self.driver.page_source
+            soup = BeautifulSoup(html, "html.parser")
+        return soup
 
     def refresh(self):
         """

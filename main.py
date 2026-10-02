@@ -10,10 +10,16 @@ A_CORE_BACKEND = [
     "kafka",
     "activemq",
     "postgres",
+    "postgresql",
     "mysql",
     "sql server",
     "alembic",
     "uvicorn",
+    "asyncio",
+    "async",
+    "pytest",
+    "celery",
+    "gunicorn",
 ]
 
 B_API_LAYER = [
@@ -21,9 +27,17 @@ B_API_LAYER = [
     "flask",
     "api",
     "rest",
+    "rest api",
+    "restful",
     "microservices",
     "graphql",
     "grpc",
+    "openapi",
+    "swagger",
+    "websocket",
+    "websockets",
+    "event-driven",
+    "event driven",
 ]
 
 C_AI_ML = [
@@ -44,21 +58,63 @@ C_AI_ML = [
     "artificial intelligence",
     "chatgpt",
     "llm",
+    "large language model",
+    "generative ai",
+    "genai",
     "langchain",
+    "langgraph",
+    "rag",
+    "retrieval augmented generation",
+    "vector database",
+    "vector search",
+    "embedding",
+    "embeddings",
+    "hugging face",
+    "transformers",
+    "hitl",
+    "human in the loop",
+    "human-in-the-loop",
+    "human feedback",
+    "human review",
+    "agent",
+    "ai agent",
+    "agents",
+    "mcp",
+    "model context protocol",
+    "prompt engineering",
+    "inference",
+    "fine tuning",
+    "fine-tuning",
 ]
 
 D_BACKEND_ENV = [
     "docker",
     "aws",
+    "azure",
+    "gcp",
+    "google cloud",
     "kubernetes",
     "terraform",
     "ci/cd",
+    "continuous integration",
+    "continuous delivery",
     "etl",
     "airflow",
     "spark",
     "polyglot",
     "redis",
     "rabbitmq",
+    "azure functions",
+    "lambda",
+    "fargate",
+    "ecs",
+    "sqs",
+    "sns",
+    "service bus",
+    "azure service bus",
+    "mongodb",
+    "elasticsearch",
+    "opensearch",
 ]
 
 E_FRONTEND = [
@@ -83,15 +139,21 @@ G_ROLE = [
     "software engineer",
     "software developer",
     "backend",
+    "backend engineer",
     "programmer",
+    "frontend",
+    "full stack",
+    "python developer",
+    "python engineer",
+    "platform engineer",
+    "application developer",
+    "application engineer",
 ]
-
 
 H_LANG = [
     "rust",
     "C++",
 ]
-
 
 SEARCH_TERMS = (
     A_CORE_BACKEND +

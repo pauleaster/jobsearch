@@ -2,3 +2,12 @@ __pycache__
 
 .vscode
 scraper_state.csv
+job_metadata*/
+*.html
+git.diff
+copilot
+.last_expiry_run
+*.png
+tests
+temp.*
+analysis

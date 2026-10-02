@@ -42,27 +42,28 @@ if os.path.exists(config_path):
 
     # Reading the DATABASE section
     if "DATABASE" in config:
-        DB_NAME = config["DATABASE"].get("DB_NAME")
+        database_config = config["DATABASE"]
+
+        DB_NAME = database_config.get("DB_NAME")
         if DB_NAME is None:
             raise ValueError(
                 "DB_NAME is required but not found in DATABASE configuration!"
             )
+        print(f"Using database: {DB_NAME}")  # Debugging output
+        DB_USER = database_config.get("DB_USER")
+        DB_PASSWORD = database_config.get("DB_PASSWORD")
+        DB_HOST = database_config.get("DB_HOST", "localhost")
+        DB_PORT = database_config.get("DB_PORT", "1433")
 
-        DB_USER = config["DATABASE"].get("DB_USER")  # Will be None if not present
-        DB_PASSWORD = config["DATABASE"].get(
-            "DB_PASSWORD"
-        )  # Will be None if not present
-        DB_HOST = config["DATABASE"].get("DB_HOST", "localhost")
-        DB_PORT = config["DATABASE"].get(
-            "DB_PORT", "1433"
-        )  # Updated default port for SQL Server
-
-        # New configuration for authentication method
-        auth_method_str = config["DATABASE"].get("AUTH_METHOD", "WINDOWS_AUTH")
+        auth_method_str = database_config.get("AUTH_METHOD", "WINDOWS_AUTH")
         if auth_method_str == "WINDOWS_AUTH":
             AUTH_METHOD = AuthMethod.WINDOWS_AUTH
         elif auth_method_str == "SQL_SERVER_AUTH":
             AUTH_METHOD = AuthMethod.SQL_SERVER_AUTH
+        else:
+            raise ValueError(
+                "AUTH_METHOD must be either WINDOWS_AUTH or SQL_SERVER_AUTH in the DATABASE configuration!"
+            )
 
     else:
         raise ValueError("DATABASE section not found in the configuration file!")

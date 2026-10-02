@@ -1,4 +1,5 @@
 import pandas as pd
+from scraper_module.database import commit_with_retry
 from scraper_module.models import JobData, Job, JobSearchTerm
 from scraper_module.scraper import JobScraper
 from datetime import datetime
@@ -43,7 +44,7 @@ def main():
             if invalid_h2:
                 job.expired = True
                 job.updated_at = datetime.now()
-                session.commit()
+                commit_with_retry(session)
                 print("  -> Job page loaded, but job is no longer advertised. Marked as expired.")
                 continue
 
@@ -62,7 +63,7 @@ def main():
 
             job.updated_at = datetime.now()
 
-            session.commit()
+            commit_with_retry(session)
             updated_count += 1
             print(f"  -> Fields updated: position={position}, advertiser={advertiser}, location={location}, work_type={work_type}")
         else:

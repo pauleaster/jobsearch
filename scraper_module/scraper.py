@@ -7,9 +7,11 @@ It identifies job links based on search criteria, validates these links, and cat
 them as either valid or invalid. The results are saved to respective CSV files.
 """
 
+import time
 import traceback
 import csv
 import re
+from datetime import datetime
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from selenium.common.exceptions import (
@@ -48,6 +50,13 @@ class JobScraper:
         """
         self.last_request_time = 0
         self.time_since_last_request = 0
+        self._bytes_fetched_offset = 0
+        self._fetch_start_time = time.time()
+        self.consecutive_error_count = 0
+        self.total_jobs_processed = 0
+        self.total_jobs_scraped = 0
+        self.last_page_jobs_encountered = 0
+        self.total_jobs_reported = None
 
         # Determine URLs to use based on config
         if COMBINED_SEARCH:
@@ -66,19 +75,44 @@ class JobScraper:
         except OperationalError as e:
             print("Database connection failed. Please check your settings and server.")
             print(e)
+            self.total_jobs_processed = 0
             raise SystemExit(1)
 
         self.network_handlers = None
         if load_network_handler:
             self.network_handlers = [NetworkHandler(url) for url in self.urls]
-            
+
         self.job_data = JobData()
+
+    def _print_fetch_stats(self, search_term, url, page_number, page_job_count=None):
+        total_bytes = self._bytes_fetched_offset + sum(h.bytes_fetched for h in self.network_handlers)
+        elapsed = time.time() - self._fetch_start_time
+        rate_mbs = (total_bytes / elapsed / 1024 / 1024) if elapsed > 0 else 0
+        total_mb = total_bytes / 1024 / 1024
+        location = url.rstrip("/").split("/")[-1]
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        if page_job_count is not None:
+            page_jobs_text = page_job_count
+        elif self.total_jobs_reported is not None:
+            page_jobs_text = self.total_jobs_reported
+        else:
+            page_jobs_text = "unknown"
+        print(
+            f"  [{timestamp} | {search_term} | {location}] {total_mb:.1f} MB fetched | {rate_mbs:.2f} MB/s | jobs on page: {page_jobs_text} | jobs processed: {self.total_jobs_processed} | jobs scraped: {self.total_jobs_scraped}",
+            flush=True,
+        )
+        if page_job_count is not None and self.last_page_jobs_encountered != page_job_count:
+            print(
+                f"[{timestamp}] WARNING: page reported {page_job_count} jobs but {self.last_page_jobs_encountered} job links were encountered on the page.",
+                flush=True,
+            )
 
     def is_valid_link(self, search_term, url_index, url):
         """
         Validates if the provided URL's content contains the search term.
         The link is then categorized as valid or invalid. The validity status
         (boolean) is returned. Additionally, extracts 'job_age' from the webpage.
+        It returns true for error if the soup cannot be retrieved.
         """
         soup = self.network_handlers[url_index].get_soup(url)
         if soup is None:
@@ -86,8 +120,12 @@ class JobScraper:
             return (
                 False,
                 None,
-            )  # Return False for validity and None for job_age if content retrieval fails
-        
+                True,
+                None,
+            )
+
+        self.total_jobs_scraped += 1
+
         # Truncate featured jobs section
         truncated_soup = NetworkHandler.truncate_featured_jobs(soup)
 
@@ -112,10 +150,10 @@ class JobScraper:
         if valid:
             # Extract 'job_age'
             job_age = self.extract_job_age(soup)
-            return valid, job_age
+            return valid, job_age, False, soup
         # If the search term is not found, return None for job_age
         # don't need to launch extract_job_age() for invalid jobs
-        return valid, None
+        return valid, None, False, soup
 
     def extract_job_age(self, soup):
         """
@@ -151,11 +189,16 @@ class JobScraper:
         if search_term in search_term_validities:
             if search_term_validities[search_term]:
                 print("X", end="", flush=True)
-                return
+                return False
             print("x", end="", flush=True)
-            return
+            return False
         # this search_term is not in the database for this job_number
-        valid, job_age = self.is_valid_link(search_term, url_index, url)
+        valid, job_age, error, _ = self.is_valid_link(search_term, url_index, url)
+        if error:
+            self.consecutive_error_count += 1
+            return self.consecutive_error_count >= 3
+
+        self.consecutive_error_count = 0
 
         if job_age is not None:
             # calculate the job creation date
@@ -175,6 +218,8 @@ class JobScraper:
             )
             print("I", end="", flush=True)
 
+        return False
+
     def process_page(self, search_term, url_index):
         """
         Processes the current page by snapshotting job URLs (strings) up front,
@@ -184,7 +229,7 @@ class JobScraper:
         max_attempts = 3
         hrefs: list[str] = []
 
-        for attempt in range(1, max_attempts + 1):
+        for _ in range(1, max_attempts + 1):
             job_links = self.network_handlers[url_index].find_job_links()
 
             hrefs = []
@@ -211,13 +256,19 @@ class JobScraper:
         # De-dupe URLs while preserving order
         seen = set()
         hrefs = [u for u in hrefs if not (u in seen or seen.add(u))]
+        self.last_page_jobs_encountered = len(hrefs)
 
         for url in hrefs:
-            self.process_link_url(url, search_term, url_index)
+            should_abort = self.process_link_url(url, search_term, url_index)
+            if should_abort:
+                return True
+
+        return False
 
     def process_link_url(self, url, search_term, url_index):
         """Process an individual URL to determine its validity and action."""
         job_number = self.job_data.extract_job_number_from_url(url)
+        self.total_jobs_processed += 1
 
         # For a given job_number, get dict(search_term: validity)
         search_term_validities = self.job_data.get_search_terms_and_validities(
@@ -230,16 +281,26 @@ class JobScraper:
             print(
                 "X" if search_term_validities[search_term] else "x", end="", flush=True
             )
-            return
+            return False
 
         # This search_term is not in the database for this job_number yet
-        valid, job_age = self.is_valid_link(search_term, url_index, url)
+        valid, job_age, error, soup = self.is_valid_link(search_term, url_index, url)
+        if error:
+            self.consecutive_error_count += 1
+            if self.consecutive_error_count >= 3:
+                print("\nAborting scrape after 3 consecutive link fetch failures.")
+                return True
+            print(
+                f"\nConsecutive link fetch failures: {self.consecutive_error_count}/3"
+            )
+            return False
+
+        self.consecutive_error_count = 0
         job_date = (
             self.job_data.calculate_job_date(job_age) if job_age is not None else None
         )
 
         # Extract fields from the job detail page
-        soup = self.network_handlers[url_index].get_soup(url)
         salary = self.extract_salary(soup) if soup else None
         position = self.extract_position(soup) if soup else None
         advertiser = self.extract_advertiser(soup) if soup else None
@@ -260,6 +321,7 @@ class JobScraper:
         )
 
         print("V" if valid else "I", end="", flush=True)
+        return False
 
     def extract_salary(self, soup):
         """
@@ -353,6 +415,7 @@ class JobScraper:
 
         search_term = None
         page_number = None
+        self.consecutive_error_count = 0
 
         try:
             
@@ -364,7 +427,9 @@ class JobScraper:
                     if start_from_url_index is not None and url != self.urls[start_from_url_index]:
                         continue  # Skip URLs until you reach the saved state
 
-                    print(f"\nProcessing search '{search_term}' from: {url}")
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    print(f"\n[{timestamp}] Processing search '{search_term}' from: {url}")
+                    self.total_jobs_reported = None
                     page_number = start_from_page
                     if search_term.strip().lower() != "c++":
                         self.network_handlers[url_index].initiate_search(search_term)
@@ -381,13 +446,21 @@ class JobScraper:
 
                             if page_number > 1:
                                 print("\n")
-                            print(f"page {page_number}")
+                            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            print(f"[{timestamp}] Page {page_number}")
+                            self.network_handlers[url_index].handle_successive_url_read_delay()
                             self.network_handlers[url_index].driver.get(page_url)
                             self.network_handlers[url_index].selenium_interaction_delay()
-                            self.process_page(search_term, url_index)
+                            should_abort = self.process_page(search_term, url_index)
+                            if should_abort:
+                                self.save_state(search_term, url_index, page_number)
+                                return
+                            soup = self.network_handlers[url_index].get_current_page_soup()
+                            page_job_count = self.network_handlers[url_index].extract_job_count(soup)
+                            self.total_jobs_reported = page_job_count
+                            self._print_fetch_stats(search_term, url, page_number, page_job_count)
                             self.save_state(search_term, url_index, page_number)
 
-                            soup = self.network_handlers[url_index].get_soup(page_url)
                             if not self.network_handlers[url_index].has_results(soup):
                                 break
 
@@ -399,12 +472,22 @@ class JobScraper:
                         while True:
                             try:
                                 if not self.open_cpp_search_page(page_number, url_index):
-                                    print(f"Failed to reach page {page_number} for C++ search.")
+                                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                    print(
+                                        f"[{timestamp}] Failed to reach page {page_number} for C++ search."
+                                    )
                                     break
-                                print(f"page {page_number}")
-                                self.process_page(search_term, url_index)
-                                self.save_state(search_term, url_index, page_number)
+                                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                print(f"[{timestamp}] Page {page_number}")
+                                should_abort = self.process_page(search_term, url_index)
+                                if should_abort:
+                                    self.save_state(search_term, url_index, page_number)
+                                    return
                                 soup = self.network_handlers[url_index].get_current_page_soup()
+                                page_job_count = self.network_handlers[url_index].extract_job_count(soup)
+                                self.total_jobs_reported = page_job_count
+                                self._print_fetch_stats(search_term, url, page_number, page_job_count)
+                                self.save_state(search_term, url_index, page_number)
                                 if not self.network_handlers[url_index].has_results(soup):
                                     break
                                 keepalive_counter += 1
@@ -412,14 +495,24 @@ class JobScraper:
                                     self.refresh_all_handlers()
                                 page_number += 1
                             except (TimeoutException, NoSuchElementException):
-                                print("\n\nSelenium browsing failed, likely due to inability to take focus.")
-                                print("Please press ENTER when you are ready for the scraper to continue.")
-                                print("After pressing ENTER, please do not interact with the screen until C++ scraping is complete.")
+                                wait_started = time.time()
+                                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                print(f"\n\n[{timestamp}] Selenium browsing failed, likely due to inability to take focus.")
+                                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                print(f"[{timestamp}] Please press ENTER when you are ready for the scraper to continue.")
+                                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                print(f"[{timestamp}] After pressing ENTER, please do not interact with the screen until C++ scraping is complete.")
                                 input()
-                                print(f"Recreating browser window for: {self.urls[url_index]}")
+                                wait_elapsed = time.time() - wait_started
+                                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                print(f"[{timestamp}] ENTER received after waiting {wait_elapsed:.1f} seconds.")
+                                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                print(f"[{timestamp}] Recreating browser window for: {self.urls[url_index]}")
+                                self._bytes_fetched_offset += self.network_handlers[url_index].bytes_fetched
                                 self.network_handlers[url_index].close()
                                 self.network_handlers[url_index] = NetworkHandler(self.urls[url_index])
-                                print("Browser window recreated. Retrying page...")
+                                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                print(f"[{timestamp}] Browser window recreated. Retrying page...")
                                 # page_number is unchanged — retries the same page
                     start_from_page = 1
                     if start_from_url_index == url_index:
@@ -457,7 +550,8 @@ class JobScraper:
 
         finally:
             try:
-                print("Closing database connection...")
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                print(f"[{timestamp}] Closing database connection...")
                 self.job_data.close()
             except Exception as exception:  # pylint: disable=broad-except
                 print(
@@ -466,8 +560,12 @@ class JobScraper:
                 traceback.print_exc()
 
             try:
-                print("Closing browser...")
-                print(f"Number of live network handlers: {len(self.network_handlers) if self.network_handlers else 0}")
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                print(f"[{timestamp}] Closing browser...")
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                print(
+                    f"[{timestamp}] Number of live network handlers: {len(self.network_handlers) if self.network_handlers else 0}"
+                )
                 for handler in self.network_handlers:
                     handler.close()
             except Exception as exception:  # pylint: disable=broad-except
@@ -476,12 +574,15 @@ class JobScraper:
                 if search_term is not None and page_number is not None:
                     self.save_state(search_term, url_index, page_number)
 
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"[{timestamp}] Shutdown complete.", flush=True)
+
     def save_state(self, search_term, url_index, page_number):
         """
         Saves the current state of the scraper to a CSV file.
         """
         with open("scraper_state.csv", "w", newline="", encoding="utf-8") as file:
-            file.write("# format: search_term, url_index (0=remote, 1=all-melbourne), page_number\n")
+            file.write("# format: search_term, url_index (0=remote, 1=all-melbourne), page_number (1-indexed)\n")
             writer = csv.writer(file)
             writer.writerow([search_term, url_index, page_number])
 

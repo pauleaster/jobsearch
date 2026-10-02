@@ -21,22 +21,38 @@ Examples:
 Note: Ensure lockfiles are managed properly, especially in multi-threaded scenarios.
 """
 
-
-
 import os
 from enum import Enum, auto
 from datetime import datetime, timedelta
 from sqlalchemy import (
-    Column, Integer, SmallInteger, String, Text, Boolean, Date, ForeignKey, DateTime
+    Column,
+    Integer,
+    SmallInteger,
+    String,
+    Text,
+    Boolean,
+    Date,
+    ForeignKey,
+    DateTime,
+    Index,
 )
 from sqlalchemy.orm import declarative_base, relationship
-from sqlalchemy.engine.url import URL
-from .database import engine, SessionLocal
+from .database import engine, SessionLocal, commit_with_retry
 
 Base = declarative_base()
 
+
 class Job(Base):
-    __tablename__ = 'jobs'
+    __tablename__ = "jobs"
+
+    __table_args__ = (
+        Index(
+            "IX_jobs_job_number",
+            "job_number",
+            unique=True,
+        ),
+    )
+
     job_id = Column(Integer, primary_key=True, autoincrement=True)
     job_number = Column(Integer, nullable=False)
     job_url = Column(Text, nullable=False)
@@ -55,24 +71,38 @@ class Job(Base):
     location = Column(Text, nullable=True)
     work_type = Column(Text, nullable=True)
     expired = Column(Boolean, nullable=True)
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=True)
+    updated_at = Column(
+        DateTime,
+        default=datetime.now,
+        onupdate=datetime.now,
+        nullable=True,
+    )
 
-    job_search_terms = relationship("JobSearchTerm", back_populates="job")
+    job_search_terms = relationship(
+        "JobSearchTerm",
+        back_populates="job",
+    )
+
 
 class SearchTerm(Base):
-    __tablename__ = 'search_terms'
+    __tablename__ = "search_terms"
     term_id = Column(SmallInteger, primary_key=True, autoincrement=True)
     term_text = Column(String, nullable=False)
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=True)
+    updated_at = Column(
+        DateTime, default=datetime.now, onupdate=datetime.now, nullable=True
+    )
 
     job_search_terms = relationship("JobSearchTerm", back_populates="search_term")
 
+
 class JobSearchTerm(Base):
-    __tablename__ = 'job_search_terms'
-    job_id = Column(Integer, ForeignKey('jobs.job_id'), primary_key=True)
-    term_id = Column(SmallInteger, ForeignKey('search_terms.term_id'), primary_key=True)
+    __tablename__ = "job_search_terms"
+    job_id = Column(Integer, ForeignKey("jobs.job_id"), primary_key=True)
+    term_id = Column(SmallInteger, ForeignKey("search_terms.term_id"), primary_key=True)
     valid = Column(Boolean, nullable=False)
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=True)
+    updated_at = Column(
+        DateTime, default=datetime.now, onupdate=datetime.now, nullable=True
+    )
 
     job = relationship("Job", back_populates="job_search_terms")
     search_term = relationship("SearchTerm", back_populates="job_search_terms")
@@ -90,6 +120,7 @@ class LinkStatus(Enum):
 
     VALID = auto()
     INVALID = auto()
+
 
 class JobData:
     """
@@ -122,13 +153,11 @@ class JobData:
         """
         return url.split("/")[-1]
 
-
-
     def get_link_count(self, status: LinkStatus) -> int:
         """
         Return the current count of links for a provided status.
         """
-        is_valid = (status == LinkStatus.VALID)
+        is_valid = status == LinkStatus.VALID
         count = (
             self.session.query(JobSearchTerm)
             .filter(JobSearchTerm.valid == is_valid)
@@ -136,7 +165,6 @@ class JobData:
             .count()
         )
         return count
-
 
     def get_links_difference(self, status: LinkStatus) -> int:
         """
@@ -154,16 +182,41 @@ class JobData:
         if not job:
             return {LinkStatus.VALID: False, LinkStatus.INVALID: False}
         # Check if there is at least one valid/invalid JobSearchTerm for this job
-        valid = self.session.query(JobSearchTerm).filter_by(job_id=job.job_id, valid=True).first() is not None
-        invalid = self.session.query(JobSearchTerm).filter_by(job_id=job.job_id, valid=False).first() is not None
+        valid = (
+            self.session.query(JobSearchTerm)
+            .filter_by(job_id=job.job_id, valid=True)
+            .first()
+            is not None
+        )
+        invalid = (
+            self.session.query(JobSearchTerm)
+            .filter_by(job_id=job.job_id, valid=False)
+            .first()
+            is not None
+        )
         return {LinkStatus.VALID: valid, LinkStatus.INVALID: invalid}
 
-    def add_or_update_link(self, search_term, url, job_number, job_date, status: LinkStatus,
-                          salary=None, position=None, advertiser=None, location=None, work_type=None):
+    def add_or_update_link(
+        self,
+        search_term,
+        url,
+        job_number,
+        job_date,
+        status: LinkStatus,
+        salary=None,
+        position=None,
+        advertiser=None,
+        location=None,
+        work_type=None,
+    ):
         """
         Adds a new job link to the database, categorized by the provided status.
         """
-        is_valid = (status == LinkStatus.VALID)
+        is_valid = status == LinkStatus.VALID
+
+        # TODO: Handle recycled job_numbers by detecting stale jobs, removing
+        # dependent rows from tables that reference job_id, and replacing the old
+        # row so a new job_id can be created for the incoming listing.
 
         # Insert or get the job
         job = self.session.query(Job).filter_by(job_number=job_number).first()
@@ -176,10 +229,10 @@ class JobData:
                 position=position,
                 advertiser=advertiser,
                 location=location,
-                work_type=work_type
+                work_type=work_type,
             )
             self.session.add(job)
-            self.session.commit()
+            commit_with_retry(self.session)
         else:
             # Optionally update the job_url and job_date if needed
             job.job_url = url
@@ -195,7 +248,7 @@ class JobData:
                 job.location = location
             if work_type is not None:
                 job.work_type = work_type
-            self.session.commit()
+            commit_with_retry(self.session)
         # Set the expired status to False for new or existing jobs when adding/updating links
         job.expired = False
 
@@ -204,12 +257,14 @@ class JobData:
         if not term:
             term = SearchTerm(term_text=search_term)
             self.session.add(term)
-            self.session.commit()
+            commit_with_retry(self.session)
 
         # Insert or update the association in JobSearchTerm
-        job_search_term = self.session.query(JobSearchTerm).filter_by(
-            job_id=job.job_id, term_id=term.term_id
-        ).first()
+        job_search_term = (
+            self.session.query(JobSearchTerm)
+            .filter_by(job_id=job.job_id, term_id=term.term_id)
+            .first()
+        )
         if not job_search_term:
             job_search_term = JobSearchTerm(
                 job_id=job.job_id, term_id=term.term_id, valid=is_valid
@@ -217,7 +272,7 @@ class JobData:
             self.session.add(job_search_term)
         else:
             job_search_term.valid = is_valid
-        self.session.commit()
+        commit_with_retry(self.session)
 
     def get_search_terms_and_validities(self, job_number):
         """
@@ -238,13 +293,13 @@ class JobData:
         )
         validities = {term_text: valid for term_text, valid in results}
         return validities
-    
+
     def set_not_expired(self, job_number):
         job = self.session.query(Job).filter_by(job_number=job_number).first()
         if job and job.expired is not False:
             job.expired = False
-            self.session.commit()
-   
+            commit_with_retry(self.session)
+
     def calculate_job_date(self, job_age):
         """
         Calculates the age of the job by
