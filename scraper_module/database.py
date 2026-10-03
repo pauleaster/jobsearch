@@ -22,7 +22,7 @@ def get_connection_string():
 
 
 connection_string = get_connection_string()
-print(f"Using connection string: {connection_string}")  # Debugging output
+# print(f"Using connection string: {connection_string}")  # Debugging output
 engine = create_engine(connection_string, echo=False, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine)
 

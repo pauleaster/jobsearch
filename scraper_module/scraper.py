@@ -7,11 +7,11 @@ It identifies job links based on search criteria, validates these links, and cat
 them as either valid or invalid. The results are saved to respective CSV files.
 """
 
-import csv
 import re
 import time
 import traceback
 from datetime import datetime
+from typing import Any
 
 from selenium.common.exceptions import (
     NoSuchElementException,
@@ -28,7 +28,12 @@ from .config import (
     USE_REMOTE,
 )
 from .handlers import NetworkHandler
-from .models import JobData, LinkStatus
+from .models import Job, JobData, LinkStatus
+from .snapshot import (
+    HTML_SNAPSHOT_TERMS,
+    ScraperSnapshotManager,
+    serialize_search_terms,
+)
 
 if USE_REMOTE:
     JOB_SCRAPER_URL = JOB_SCRAPER_REMOTE_URL
@@ -42,7 +47,12 @@ class JobScraper:
     based on search terms, and categorize them as valid or invalid links.
     """
 
-    def __init__(self, load_network_handler=None):
+    def __init__(
+        self,
+        load_network_handler=None,
+        snapshot_root="job_metadata",
+        state_path="scraper_state.csv",
+    ):
         """
         Initializes an instance of the JobScraper with attributes for
         managing the request timings, the scraper's URL, network handler,
@@ -57,6 +67,11 @@ class JobScraper:
         self.total_jobs_scraped = 0
         self.last_page_jobs_encountered = 0
         self.total_jobs_reported = None
+        self.snapshot_manager = ScraperSnapshotManager(
+            snapshot_root=snapshot_root,
+            state_path=state_path,
+        )
+        self.html_snapshot_terms = {term.lower() for term in HTML_SNAPSHOT_TERMS}
 
         # Determine URLs to use based on config
         if COMBINED_SEARCH:
@@ -77,11 +92,11 @@ class JobScraper:
             self.total_jobs_processed = 0
             raise SystemExit(1) from None
 
-        self.network_handlers: list[NetworkHandler] = []
+        self.network_handlers: list[Any] = []
         if load_network_handler:
             self.network_handlers = [NetworkHandler(url) for url in self.urls]
 
-        self.job_data = JobData()
+        self.job_data: Any = JobData()
 
     def _print_fetch_stats(self, search_term, url, page_number, page_job_count=None):
         total_bytes = self._bytes_fetched_offset + sum(
@@ -282,10 +297,25 @@ class JobScraper:
         # If we've already seen this job_number for this search_term, short-circuit
         if search_term in search_term_validities:
             self.job_data.set_not_expired(job_number)
-            print(
-                "X" if search_term_validities[search_term] else "x", end="", flush=True
-            )
-            return False
+            if search_term_validities[search_term]:
+                if (
+                    search_term.lower() in self.html_snapshot_terms
+                    and self.snapshot_manager.snapshot_id is not None
+                ):
+                    snapshot_dir = self.snapshot_manager.snapshot_dir
+                    output_html = snapshot_dir / f"{job_number}.html"
+                    if output_html.exists():
+                        self._recover_snapshot_if_needed(job_number, url, search_term)
+                        print("X", end="", flush=True)
+                        return False
+                    # HTML was rolled back; fall through and refetch so the
+                    # snapshot can be reconstructed.
+                else:
+                    print("X", end="", flush=True)
+                    return False
+            else:
+                print("x", end="", flush=True)
+                return False
 
         # This search_term is not in the database for this job_number yet
         valid, job_age, error, soup = self.is_valid_link(search_term, url_index, url)
@@ -303,13 +333,7 @@ class JobScraper:
         job_date = (
             self.job_data.calculate_job_date(job_age) if job_age is not None else None
         )
-
-        # Extract fields from the job detail page
-        salary = self.extract_salary(soup) if soup else None
-        position = self.extract_position(soup) if soup else None
-        advertiser = self.extract_advertiser(soup) if soup else None
-        location = self.extract_location(soup) if soup else None
-        work_type = self.extract_work_type(soup) if soup else None
+        metadata = self._extract_job_metadata(soup)
 
         self.job_data.add_or_update_link(
             search_term,
@@ -317,15 +341,32 @@ class JobScraper:
             job_number,
             job_date,
             LinkStatus.VALID if valid else LinkStatus.INVALID,
-            salary=salary,
-            position=position,
-            advertiser=advertiser,
-            location=location,
-            work_type=work_type,
+            salary=metadata["salary"],
+            position=metadata["position"],
+            advertiser=metadata["advertiser"],
+            location=metadata["location"],
+            work_type=metadata["work_type"],
         )
+
+        if valid and search_term.lower() in self.html_snapshot_terms:
+            self._persist_job_snapshot(
+                job_number=job_number,
+                url=url,
+                search_term=search_term,
+                soup=soup,
+            )
 
         print("V" if valid else "I", end="", flush=True)
         return False
+
+    def _extract_job_metadata(self, soup):
+        return {
+            "salary": self.extract_salary(soup) if soup else None,
+            "position": self.extract_position(soup) if soup else None,
+            "advertiser": self.extract_advertiser(soup) if soup else None,
+            "location": self.extract_location(soup) if soup else None,
+            "work_type": self.extract_work_type(soup) if soup else None,
+        }
 
     def extract_salary(self, soup):
         """
@@ -422,6 +463,16 @@ class JobScraper:
         search_term = None
         page_number = None
         self.consecutive_error_count = 0
+        page_checkpointed = False
+
+        if saved_state is not None and saved_state.get("snapshot_id"):
+            self.snapshot_manager.ensure_snapshot(saved_state["snapshot_id"])
+        else:
+            if saved_state is not None and saved_state.get("legacy_state"):
+                print(
+                    "Legacy scraper_state.csv without snapshot_id detected; starting a new snapshot session."
+                )
+            self.snapshot_manager.ensure_snapshot()
 
         try:
             for search_term in search_terms:
@@ -462,6 +513,7 @@ class JobScraper:
                                 print("\n")
                             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                             print(f"[{timestamp}] Page {page_number}")
+                            page_checkpointed = False
                             self.network_handlers[
                                 url_index
                             ].handle_successive_url_read_delay()
@@ -473,6 +525,8 @@ class JobScraper:
                             if should_abort:
                                 self.save_state(search_term, url_index, page_number)
                                 return
+                            self.save_state(search_term, url_index, page_number)
+                            page_checkpointed = True
                             soup = self.network_handlers[
                                 url_index
                             ].get_current_page_soup()
@@ -483,7 +537,6 @@ class JobScraper:
                             self._print_fetch_stats(
                                 search_term, url, page_number, page_job_count
                             )
-                            self.save_state(search_term, url_index, page_number)
 
                             if not self.network_handlers[url_index].has_results(soup):
                                 break
@@ -507,10 +560,13 @@ class JobScraper:
                                     break
                                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                                 print(f"[{timestamp}] Page {page_number}")
+                                page_checkpointed = False
                                 should_abort = self.process_page(search_term, url_index)
                                 if should_abort:
                                     self.save_state(search_term, url_index, page_number)
                                     return
+                                self.save_state(search_term, url_index, page_number)
+                                page_checkpointed = True
                                 soup = self.network_handlers[
                                     url_index
                                 ].get_current_page_soup()
@@ -521,7 +577,6 @@ class JobScraper:
                                 self._print_fetch_stats(
                                     search_term, url, page_number, page_job_count
                                 )
-                                self.save_state(search_term, url_index, page_number)
                                 if not self.network_handlers[url_index].has_results(
                                     soup
                                 ):
@@ -578,11 +633,19 @@ class JobScraper:
 
         except KeyboardInterrupt:
             print("Scraping interrupted by user.")
-            if search_term is not None and page_number is not None:
+            if (
+                search_term is not None
+                and page_number is not None
+                and not page_checkpointed
+            ):
                 self.save_state(search_term, url_index, page_number)
 
         except OperationalError as exception:
-            if search_term is not None and page_number is not None:
+            if (
+                search_term is not None
+                and page_number is not None
+                and not page_checkpointed
+            ):
                 self.save_state(search_term, url_index, page_number)
             orig = str(exception.orig) if exception.orig else ""
             if "08S01" in orig or "233" in orig or "Communication link failure" in orig:
@@ -596,7 +659,11 @@ class JobScraper:
             traceback.print_exc()
 
         except Exception as exception:  # pylint: disable=broad-except
-            if search_term is not None and page_number is not None:
+            if (
+                search_term is not None
+                and page_number is not None
+                and not page_checkpointed
+            ):
                 self.save_state(search_term, url_index, page_number)
             print(f"Unhandled exception occurred: {exception}")
             print("Printing stack trace...")
@@ -635,36 +702,106 @@ class JobScraper:
         """
         Saves the current state of the scraper to a CSV file.
         """
-        with open("scraper_state.csv", "w", newline="", encoding="utf-8") as file:
-            file.write(
-                "# format: search_term, url_index (0=remote, 1=all-melbourne), page_number (1-indexed)\n"
-            )
-            writer = csv.writer(file)
-            writer.writerow([search_term, url_index, page_number])
+        self.snapshot_manager.save_state(search_term, url_index, page_number)
 
     def load_state(self):
         """
         Loads the last saved state of the scraper from a CSV file.
         Returns None if the file is not found or has invalid data.
         """
-        try:
-            with open("scraper_state.csv", encoding="utf-8") as file:
-                reader = csv.reader(row for row in file if not row.startswith("#"))
-                for row in reader:
-                    return {
-                        "search_term": row[0],
-                        "url_index": int(row[1]),
-                        "page_number": int(row[2]),
-                    }
-        except Exception:
-            return None  # return if no valid data is found in the csv file
+        return self.snapshot_manager.load_state()
 
     def clear_state(self):
         """
         Clears the saved state of the scraper by emptying the CSV file.
         """
-        with open("scraper_state.csv", "w", newline="", encoding="utf-8"):
-            pass
+        self.snapshot_manager.clear_state()
+
+    def _build_snapshot_csv_row(
+        self,
+        job_number: str,
+        url: str,
+        search_term: str,
+    ) -> dict[str, Any]:
+        job = self.job_data.session.query(Job).filter_by(job_number=job_number).first()
+        valid_terms = [
+            term_text
+            for term_text, is_valid in self.job_data.get_search_terms_and_validities(
+                job_number
+            ).items()
+            if is_valid
+        ]
+
+        if search_term not in valid_terms:
+            valid_terms.append(search_term)
+
+        row = {
+            "job_number": job_number,
+            "job_url": url,
+            "title": getattr(job, "title", None) if job is not None else None,
+            "comments": getattr(job, "comments", None) if job is not None else None,
+            "requirements": getattr(job, "requirements", None)
+            if job is not None
+            else None,
+            "follow_up": getattr(job, "follow_up", None) if job is not None else None,
+            "highlight": getattr(job, "highlight", None) if job is not None else None,
+            "applied": getattr(job, "applied", None) if job is not None else None,
+            "contact": getattr(job, "contact", None) if job is not None else None,
+            "application_comments": getattr(job, "application_comments", None)
+            if job is not None
+            else None,
+            "job_date": getattr(job, "job_date", None) if job is not None else None,
+            "salary": getattr(job, "salary", None) if job is not None else None,
+            "position": getattr(job, "position", None) if job is not None else None,
+            "advertiser": getattr(job, "advertiser", None) if job is not None else None,
+            "location": getattr(job, "location", None) if job is not None else None,
+            "work_type": getattr(job, "work_type", None) if job is not None else None,
+            "expired": getattr(job, "expired", None) if job is not None else None,
+            "updated_at": getattr(job, "updated_at", None) if job is not None else None,
+            "search_terms": serialize_search_terms(valid_terms),
+        }
+        return row
+
+    def _persist_job_snapshot(
+        self,
+        job_number: str,
+        soup: Any,
+        url: str,
+        search_term: str,
+    ) -> None:
+        row = self._build_snapshot_csv_row(
+            job_number=job_number, url=url, search_term=search_term
+        )
+        self.snapshot_manager.write_job_snapshot(job_number, soup, row)
+
+    def _recover_snapshot_if_needed(self, job_number: str, url: str, search_term: str):
+        snapshot_dir = self.snapshot_manager.snapshot_dir
+        output_html = snapshot_dir / f"{job_number}.html"
+        output_csv = snapshot_dir / "combined_job_search_results.csv"
+
+        if not output_html.exists() or self._snapshot_csv_row_exists(
+            output_csv, job_number
+        ):
+            return
+
+        row = self._build_snapshot_csv_row(
+            job_number=job_number, url=url, search_term=search_term
+        )
+        self.snapshot_manager.upsert_csv_row(output_csv, row)
+
+    def _snapshot_csv_row_exists(self, csv_path, job_number: str) -> bool:
+        import csv as _csv
+
+        if not csv_path.exists():
+            return False
+
+        with csv_path.open(encoding="utf-8", newline="") as file:
+            reader = _csv.DictReader(file)
+            for row in reader:
+                if (row.get("job_number") or "").strip() == job_number:
+                    return True
+
+        return False
 
 
 def print_legend():

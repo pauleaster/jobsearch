@@ -169,9 +169,13 @@ SEARCH_TERMS = (
 search_terms = [f"{s}" for s in SEARCH_TERMS]
 
 
-if __name__ == "__main__":
+def main():
     scraper = JobScraper(load_network_handler=True)
     mark_expired_jobs(scraper)
     scraper.perform_searches(search_terms)
 
     print("Finished scraping.\n")
+
+
+if __name__ == "__main__":
+    main()

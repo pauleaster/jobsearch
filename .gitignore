@@ -8,6 +8,6 @@ git.diff
 copilot
 .last_expiry_run
 *.png
-tests
 temp.*
 analysis
+*.egg-info/*
