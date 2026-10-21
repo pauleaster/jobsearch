@@ -44,9 +44,9 @@ def mark_expired_jobs(scraper: JobScraper):
     job_ids = (
         session.query(JobSearchTerm.job_id)
         .join(Job, Job.job_id == JobSearchTerm.job_id)
-        .filter(JobSearchTerm.valid.is_(True))
-        .filter((Job.expired.is_(None)) | (Job.expired.is_(False)))
-        .filter((Job.job_date.is_(None)) | (Job.job_date < cutoff))
+        .filter(JobSearchTerm.valid == True)
+        .filter((Job.expired == None) | (Job.expired == False))
+        .filter((Job.job_date == None) | (Job.job_date < cutoff))
         .distinct()
         .all()
     )

@@ -69,6 +69,18 @@ if os.path.exists(config_path):
     else:
         raise ValueError("DATABASE section not found in the configuration file!")
 
+    # Reading the LOGGING section
+    if "LOGGING" in config:
+        logging_config = config["LOGGING"]
+        log_dir = logging_config.get("LOG_DIR")
+        if log_dir is None:
+            raise ValueError(
+                "LOG_DIR is required but not found in LOGGING configuration!"
+            )
+        LOG_DIR: str = log_dir
+    else:
+        raise ValueError("LOGGING section not found in the configuration file!")
+
     # Reading the SCRAPER section
     if "SCRAPER" in config:
         COMBINED_SEARCH = config["SCRAPER"].getboolean("COMBINED_SEARCH", False)

@@ -1,5 +1,5 @@
-from scraper_module.expired import mark_expired_jobs
-from scraper_module.scraper import JobScraper
+from scraper_module.application_logging import run_with_application_logging
+from scraper_module.config import LOG_DIR
 
 A_CORE_BACKEND = [
     "python",
@@ -169,9 +169,19 @@ SEARCH_TERMS = (
 search_terms = [f"{s}" for s in SEARCH_TERMS]
 
 
-if __name__ == "__main__":
-    scraper = JobScraper(load_network_handler=True)
-    mark_expired_jobs(scraper)
-    scraper.perform_searches(search_terms)
+def main() -> int:
+    def run_scraper() -> None:
+        from scraper_module.expired import mark_expired_jobs
+        from scraper_module.scraper import JobScraper
 
-    print("Finished scraping.\n")
+        scraper = JobScraper(load_network_handler=True)
+        mark_expired_jobs(scraper)
+        scraper.perform_searches(search_terms)
+
+        print("Finished scraping.\n")
+
+    return run_with_application_logging(LOG_DIR, run_scraper)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
