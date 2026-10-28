@@ -310,6 +310,23 @@ class JobScraperSnapshotTests(unittest.TestCase):
             self.assertEqual(created_job_data[0].session.execute_calls, 1)
             self.assertEqual(created_job_data[1].session.execute_calls, 0)
 
+    def test_fetch_stats_report_total_results_not_page_job_count(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            scraper = self._build_scraper(Path(temp_dir))
+
+            with mock.patch("builtins.print") as print_mock:
+                scraper._print_fetch_stats(
+                    "platform engineer",
+                    "https://example.com/in-All-Melbourne-VIC",
+                    1,
+                    663,
+                )
+
+            output = print_mock.call_args.args[0]
+            self.assertIn("total matching results: 663", output)
+            self.assertNotIn("jobs on page", output)
+            self.assertEqual(print_mock.call_count, 1)
+
     def test_process_link_url_snapshots_only_for_qualifying_terms(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             scraper = self._build_scraper(Path(temp_dir))

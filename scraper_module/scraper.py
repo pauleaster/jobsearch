@@ -98,7 +98,9 @@ class JobScraper:
 
         self.job_data: Any = JobData()
 
-    def _print_fetch_stats(self, search_term, url, page_number, page_job_count=None):
+    def _print_fetch_stats(
+        self, search_term, url, page_number, total_matching_results=None
+    ):
         total_bytes = self._bytes_fetched_offset + sum(
             h.bytes_fetched for h in self.network_handlers
         )
@@ -107,24 +109,16 @@ class JobScraper:
         total_mb = total_bytes / 1024 / 1024
         location = url.rstrip("/").split("/")[-1]
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        if page_job_count is not None:
-            page_jobs_text = page_job_count
+        if total_matching_results is not None:
+            total_results_text = total_matching_results
         elif self.total_jobs_reported is not None:
-            page_jobs_text = self.total_jobs_reported
+            total_results_text = self.total_jobs_reported
         else:
-            page_jobs_text = "unknown"
+            total_results_text = "unknown"
         print(
-            f"  [{timestamp} | {search_term} | {location}] {total_mb:.1f} MB fetched | {rate_mbs:.2f} MB/s | jobs on page: {page_jobs_text} | jobs processed: {self.total_jobs_processed} | jobs scraped: {self.total_jobs_scraped}",
+            f"  [{timestamp} | {search_term} | {location}] {total_mb:.1f} MB fetched | {rate_mbs:.2f} MB/s | total matching results: {total_results_text} | jobs processed: {self.total_jobs_processed} | jobs scraped: {self.total_jobs_scraped}",
             flush=True,
         )
-        if (
-            page_job_count is not None
-            and self.last_page_jobs_encountered != page_job_count
-        ):
-            print(
-                f"[{timestamp}] WARNING: page reported {page_job_count} jobs but {self.last_page_jobs_encountered} job links were encountered on the page.",
-                flush=True,
-            )
 
     def is_valid_link(self, search_term, url_index, url):
         """
@@ -530,12 +524,12 @@ class JobScraper:
                             soup = self.network_handlers[
                                 url_index
                             ].get_current_page_soup()
-                            page_job_count = self.network_handlers[
+                            total_matching_results = self.network_handlers[
                                 url_index
                             ].extract_job_count(soup)
-                            self.total_jobs_reported = page_job_count
+                            self.total_jobs_reported = total_matching_results
                             self._print_fetch_stats(
-                                search_term, url, page_number, page_job_count
+                                search_term, url, page_number, total_matching_results
                             )
 
                             if not self.network_handlers[url_index].has_results(soup):
@@ -570,12 +564,15 @@ class JobScraper:
                                 soup = self.network_handlers[
                                     url_index
                                 ].get_current_page_soup()
-                                page_job_count = self.network_handlers[
+                                total_matching_results = self.network_handlers[
                                     url_index
                                 ].extract_job_count(soup)
-                                self.total_jobs_reported = page_job_count
+                                self.total_jobs_reported = total_matching_results
                                 self._print_fetch_stats(
-                                    search_term, url, page_number, page_job_count
+                                    search_term,
+                                    url,
+                                    page_number,
+                                    total_matching_results,
                                 )
                                 if not self.network_handlers[url_index].has_results(
                                     soup

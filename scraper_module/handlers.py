@@ -254,26 +254,29 @@ class NetworkHandler:
                     print(
                         f"[{timestamp}] Cloudflare challenge page detected for URL: {url}"
                     )
-                    self.recover_browser(url)
                     retries += 1
+                    if retries < max_retries:
+                        self.recover_browser(url)
                     continue
                 if self.is_429_page(soup, url):
-                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    print(
-                        f"[{timestamp}] 429-like page detected, retrying after {delay} seconds..."
-                    )
-                    time.sleep(self._apply_delay_variance(delay))
-                    delay *= 2  # Exponential backoff
                     retries += 1
+                    if retries < max_retries:
+                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        print(
+                            f"[{timestamp}] Retrying after detected error page in {delay} seconds..."
+                        )
+                        time.sleep(self._apply_delay_variance(delay))
+                        delay *= 2  # Exponential backoff
                     continue
                 self.bytes_fetched += len(html.encode("utf-8"))
                 return soup
             except Exception as exception:
                 print("E", end="")
-                time.sleep(self._apply_delay_variance(delay))
-                delay *= 2  # Exponential backoff
                 retries += 1
                 last_exception = exception
+                if retries < max_retries:
+                    time.sleep(self._apply_delay_variance(delay))
+                    delay *= 2  # Exponential backoff
         print(f"Exceeded maximum retries for URL: {url}")
         if last_exception:
             print(f"Last exception: {last_exception}")
@@ -333,7 +336,7 @@ class NetworkHandler:
         text = soup.get_text(separator=" ", strip=True).lower()
         if "too many requests" in text:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            print(f'[{timestamp}] "too many requests" found in page for URL: {url}')
+            print(f"[{timestamp}] 429 rate-limit page detected for URL: {url}")
             return True
         # Detect the site's 503 "Technical error" page
         title = soup.title.string.lower() if soup.title and soup.title.string else ""
@@ -364,29 +367,29 @@ class NetworkHandler:
 
     def extract_job_count(self, soup):
         """
-        Extract the displayed total job count from the search results page.
+        Extract the total matching result count from the search results page.
         """
         if soup is None:
             return None
+
+        def parse_count(element):
+            text = element.get_text(separator=" ", strip=True).lower()
+            match = re.search(r"(\d[\d,]*)\s+jobs?\b", text)
+            return int(match.group(1).replace(",", "")) if match else None
+
+        job_counters = soup.find_all(attrs={"data-automation": "jobCounter"})
+        if job_counters:
+            counts = {parse_count(counter) for counter in job_counters}
+            if None in counts or len(counts) != 1:
+                return None
+            return counts.pop()
+
+        # Older SEEK markup used this selector for the total-results message.
         total_jobs_message = soup.find(attrs={"data-automation": "totalJobsMessage"})
         if total_jobs_message is None:
             return None
-
         inner_span = total_jobs_message.find("span")
-        text = (
-            (
-                inner_span.get_text(separator=" ", strip=True)
-                if inner_span is not None
-                else total_jobs_message.get_text(separator=" ", strip=True)
-            )
-            .lower()
-            .replace("\u2019", "'")
-        )
-
-        match = re.search(r"(\d[\d,]*)\s+jobs?\b", text)
-        if match:
-            return int(match.group(1).replace(",", ""))
-        return None
+        return parse_count(inner_span or total_jobs_message)
 
     def get_current_page_soup(self):
         """
