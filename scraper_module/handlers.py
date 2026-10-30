@@ -372,24 +372,89 @@ class NetworkHandler:
         if soup is None:
             return None
 
-        def parse_count(element):
-            text = element.get_text(separator=" ", strip=True).lower()
-            match = re.search(r"(\d[\d,]*)\s+jobs?\b", text)
-            return int(match.group(1).replace(",", "")) if match else None
-
         job_counters = soup.find_all(attrs={"data-automation": "jobCounter"})
         if job_counters:
-            counts = {parse_count(counter) for counter in job_counters}
+            counts = {
+                NetworkHandler._parse_job_count(counter) for counter in job_counters
+            }
             if None in counts or len(counts) != 1:
                 return None
             return counts.pop()
 
-        # Older SEEK markup used this selector for the total-results message.
+        # Older page markup used this selector for the total-results message.
         total_jobs_message = soup.find(attrs={"data-automation": "totalJobsMessage"})
         if total_jobs_message is None:
             return None
         inner_span = total_jobs_message.find("span")
-        return parse_count(inner_span or total_jobs_message)
+        return NetworkHandler._parse_job_count(inner_span or total_jobs_message)
+
+    @staticmethod
+    def _parse_job_count(element):
+        text = element.get_text(separator=" ", strip=True).lower()
+        match = re.search(r"(\d[\d,]*)\s+jobs?\b", text)
+        return int(match.group(1).replace(",", "")) if match else None
+
+    @staticmethod
+    def get_job_count_failure_diagnostic(soup):
+        """Return structured details when count extraction would fail."""
+        diagnostic = {
+            "reason": None,
+            "soup_available": soup is not None,
+            "job_counter_count": 0,
+            "job_counter_values": [],
+            "total_jobs_message_count": 0,
+            "legacy_value": None,
+            "sample": None,
+        }
+        if soup is None:
+            diagnostic["reason"] = "missing_soup"
+            return diagnostic
+
+        job_counters = soup.find_all(attrs={"data-automation": "jobCounter"})
+        total_jobs_messages = soup.find_all(
+            attrs={"data-automation": "totalJobsMessage"}
+        )
+        diagnostic["job_counter_count"] = len(job_counters)
+        diagnostic["total_jobs_message_count"] = len(total_jobs_messages)
+
+        if job_counters:
+            values = [
+                NetworkHandler._parse_job_count(counter) for counter in job_counters
+            ]
+            diagnostic["job_counter_values"] = values
+            if None in values:
+                diagnostic["reason"] = "unparseable_counter"
+                sample_element = next(
+                    counter
+                    for counter, value in zip(job_counters, values, strict=True)
+                    if value is None
+                )
+                diagnostic["sample"] = NetworkHandler._job_count_sample(sample_element)
+            elif len(set(values)) != 1:
+                diagnostic["reason"] = "conflicting_counters"
+            else:
+                return None
+            return diagnostic
+
+        if not total_jobs_messages:
+            diagnostic["reason"] = "no_matching_elements"
+            return diagnostic
+
+        total_jobs_message = total_jobs_messages[0]
+        inner_span = total_jobs_message.find("span")
+        count_element = inner_span or total_jobs_message
+        legacy_value = NetworkHandler._parse_job_count(count_element)
+        diagnostic["legacy_value"] = legacy_value
+        if legacy_value is None:
+            diagnostic["reason"] = "unparseable_legacy_message"
+            diagnostic["sample"] = NetworkHandler._job_count_sample(count_element)
+            return diagnostic
+        return None
+
+    @staticmethod
+    def _job_count_sample(element):
+        text = " ".join(element.get_text(separator=" ", strip=True).split())
+        return text[:80]
 
     def get_current_page_soup(self):
         """

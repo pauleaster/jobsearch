@@ -67,6 +67,7 @@ class JobScraper:
         self.total_jobs_scraped = 0
         self.last_page_jobs_encountered = 0
         self.total_jobs_reported = None
+        self._logged_job_count_diagnostics = set()
         self.snapshot_manager = ScraperSnapshotManager(
             snapshot_root=snapshot_root,
             state_path=state_path,
@@ -119,6 +120,44 @@ class JobScraper:
             f"  [{timestamp} | {search_term} | {location}] {total_mb:.1f} MB fetched | {rate_mbs:.2f} MB/s | total matching results: {total_results_text} | jobs processed: {self.total_jobs_processed} | jobs scraped: {self.total_jobs_scraped}",
             flush=True,
         )
+
+    def _extract_job_count(self, soup, search_term, url, page_number, url_index):
+        handler = self.network_handlers[url_index]
+        total_matching_results = handler.extract_job_count(soup)
+        if total_matching_results is None:
+            diagnostic = handler.get_job_count_failure_diagnostic(soup)
+            reason = diagnostic["reason"] if diagnostic is not None else "unclassified"
+            location = url.rstrip("/").split("/")[-1]
+            diagnostic_key = (search_term, location, reason)
+            if diagnostic_key not in self._logged_job_count_diagnostics:
+                self._logged_job_count_diagnostics.add(diagnostic_key)
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                details = [
+                    f"[{timestamp}] [search-count]",
+                    f"term={search_term!r}",
+                    f"location={location!r}",
+                    f"page={page_number}",
+                    f"reason={reason}",
+                ]
+                if diagnostic is None:
+                    details.append(f"soup_available={str(soup is not None).lower()}")
+                else:
+                    details.extend(
+                        [
+                            "soup_available="
+                            f"{str(diagnostic['soup_available']).lower()}",
+                            f"jobCounter={diagnostic['job_counter_count']}",
+                            f"values={diagnostic['job_counter_values']!r}",
+                            "totalJobsMessage="
+                            f"{diagnostic['total_jobs_message_count']}",
+                        ]
+                    )
+                    if reason == "unparseable_legacy_message":
+                        details.append(f"legacy_value={diagnostic['legacy_value']!r}")
+                    if diagnostic["sample"] is not None:
+                        details.append(f"sample={diagnostic['sample']!r}")
+                print(" ".join(details), flush=True)
+        return total_matching_results
 
     def is_valid_link(self, search_term, url_index, url):
         """
@@ -524,9 +563,9 @@ class JobScraper:
                             soup = self.network_handlers[
                                 url_index
                             ].get_current_page_soup()
-                            total_matching_results = self.network_handlers[
-                                url_index
-                            ].extract_job_count(soup)
+                            total_matching_results = self._extract_job_count(
+                                soup, search_term, url, page_number, url_index
+                            )
                             self.total_jobs_reported = total_matching_results
                             self._print_fetch_stats(
                                 search_term, url, page_number, total_matching_results
@@ -564,9 +603,9 @@ class JobScraper:
                                 soup = self.network_handlers[
                                     url_index
                                 ].get_current_page_soup()
-                                total_matching_results = self.network_handlers[
-                                    url_index
-                                ].extract_job_count(soup)
+                                total_matching_results = self._extract_job_count(
+                                    soup, search_term, url, page_number, url_index
+                                )
                                 self.total_jobs_reported = total_matching_results
                                 self._print_fetch_stats(
                                     search_term,
